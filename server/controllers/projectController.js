@@ -149,9 +149,41 @@ return res.status(500).json({
 
 }
 };
+// DELETE PROJECT
+const deleteProject = async (req, res) => {
+  try {
+    const project = await Project.findOneAndDelete({
+      _id: req.params.id,
+      owner: req.userId,
+    });
+
+    if (!project) {
+      return res.status(404).json({
+        message: "Project not found or you do not have permission to delete it",
+      });
+    }
+
+    return res.status(200).json({
+      message: "Project deleted successfully",
+      project,
+    });
+  } catch (error) {
+    if (error.name === "CastError") {
+      return res.status(400).json({
+        message: "Invalid project ID",
+      });
+    }
+
+    return res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
 
 module.exports = {
-createProject,
-getMyProjects,
-updateProject,
+  createProject,
+  getMyProjects,
+  updateProject,
+  deleteProject,
 };
