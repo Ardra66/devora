@@ -1,5 +1,6 @@
 const Project = require("../models/Project");
 
+// CREATE PROJECT
 const createProject = async (req, res) => {
 try {
 const { name, description, technologies, status } = req.body;
@@ -23,7 +24,6 @@ res.status(201).json({
   project,
 });
 
-
 } catch (error) {
 res.status(500).json({
 message: "Server error",
@@ -32,12 +32,12 @@ error: error.message,
 }
 };
 
+// GET ALL PROJECTS BELONGING TO THE LOGGED-IN USER
 const getMyProjects = async (req, res) => {
 try {
 const projects = await Project.find({
 owner: req.userId,
 }).sort({ createdAt: -1 });
-
 
 res.status(200).json({
   message: "Projects fetched successfully",
@@ -53,7 +53,105 @@ error: error.message,
 }
 };
 
+// UPDATE PROJECT
+const updateProject = async (req, res) => {
+try {
+const { name, description, technologies, status } = req.body;
+
+// TEMPORARY DEBUGGING MESSAGES
+console.log("Project ID:", req.params.id);
+console.log("Logged-in User ID:", req.userId);
+
+// Validate project ID
+if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
+  return res.status(400).json({
+    message: "Invalid project ID",
+  });
+}
+
+// Prepare fields to update
+const updates = {};
+
+if (name !== undefined) {
+  if (typeof name !== "string" || !name.trim()) {
+    return res.status(400).json({
+      message: "Project name cannot be empty",
+    });
+  }
+
+  updates.name = name.trim();
+}
+
+if (description !== undefined) {
+  updates.description = description;
+}
+
+if (technologies !== undefined) {
+  if (
+    !Array.isArray(technologies) ||
+    !technologies.every((technology) => typeof technology === "string")
+  ) {
+    return res.status(400).json({
+      message: "Technologies must be an array of strings",
+    });
+  }
+
+  updates.technologies = technologies;
+}
+
+if (status !== undefined) {
+  updates.status = status;
+}
+
+if (Object.keys(updates).length === 0) {
+  return res.status(400).json({
+    message: "Please provide at least one field to update",
+  });
+}
+
+// Update only a project owned by the logged-in user
+const project = await Project.findOneAndUpdate(
+  {
+    _id: req.params.id,
+    owner: req.userId,
+  },
+  updates,
+  {
+    new: true,
+    runValidators: true,
+  }
+);
+
+if (!project) {
+  return res.status(404).json({
+    message: "Project not found or you do not have permission to update it",
+  });
+}
+
+return res.status(200).json({
+  message: "Project updated successfully",
+  project,
+});
+
+} catch (error) {
+console.error("Update project error:", error.message);
+
+if (error.name === "CastError") {
+  return res.status(400).json({
+    message: "Invalid project ID",
+  });
+}
+
+return res.status(500).json({
+  message: "Server error",
+  error: error.message,
+});
+
+}
+};
+
 module.exports = {
 createProject,
 getMyProjects,
+updateProject,
 };

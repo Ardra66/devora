@@ -17,6 +17,9 @@ app.use(cors());
 app.use(express.json());
 app.use("/api/auth", authRoutes)
 app.use("/api/projects", projectRoutes);
+app.get("/server-check", (req, res) => {
+  res.json({ message: "Correct Devora server is running!" });
+});
 
 
 
