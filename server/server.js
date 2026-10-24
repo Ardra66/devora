@@ -18,9 +18,7 @@ app.use(express.json());
 app.use("/api/auth", authRoutes)
 app.use("/api/projects", projectRoutes);
 
-app.get("/api/projects/test", (req, res) => {
-  res.json({ message: "Project routes are working!" });
-});
+
 
 app.get("/", (req, res) => {
   res.json({

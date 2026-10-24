@@ -4,7 +4,6 @@ const createProject = async (req, res) => {
 try {
 const { name, description, technologies, status } = req.body;
 
-
 if (!name || !name.trim()) {
   return res.status(400).json({
     message: "Project name is required",
@@ -24,6 +23,7 @@ res.status(201).json({
   project,
 });
 
+
 } catch (error) {
 res.status(500).json({
 message: "Server error",
@@ -32,4 +32,28 @@ error: error.message,
 }
 };
 
-module.exports = { createProject };
+const getMyProjects = async (req, res) => {
+try {
+const projects = await Project.find({
+owner: req.userId,
+}).sort({ createdAt: -1 });
+
+
+res.status(200).json({
+  message: "Projects fetched successfully",
+  count: projects.length,
+  projects,
+});
+
+} catch (error) {
+res.status(500).json({
+message: "Server error",
+error: error.message,
+});
+}
+};
+
+module.exports = {
+createProject,
+getMyProjects,
+};
