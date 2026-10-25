@@ -40,24 +40,38 @@ error: error.message,
 
 
 const getMyProjects = async (req, res) => {
-try {
-const projects = await Project.find({
-owner: req.userId,
-}).sort({ createdAt: -1 });
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 10));
+    const skip = (page - 1) * limit;
 
-res.status(200).json({
-  message: "Projects fetched successfully",
-  count: projects.length,
-  projects,
-});
+    const projects = await Project.find({
+      owner: req.userId,
+    })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
 
-} catch (error) {
-res.status(500).json({
-message: "Server error",
-error: error.message,
-});
-}
+    const totalProjects = await Project.countDocuments({
+      owner: req.userId,
+    });
+
+    res.status(200).json({
+      message: "Projects fetched successfully",
+      count: projects.length,
+      totalProjects,
+      currentPage: page,
+      totalPages: Math.ceil(totalProjects / limit),
+      projects,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Server error",
+      error: error.message,
+    });
+  }
 };
+
 
 
 const updateProject = async (req, res) => {
