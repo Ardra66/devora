@@ -5,23 +5,18 @@ const createProject = async (req, res) => {
 try {
 const { name, description, technologies, status } = req.body;
 
+
+
 if (
-  technologies !== undefined &&
-  (!Array.isArray(technologies) ||
-    !technologies.every((technology) => typeof technology === "string"))
+  status !== undefined &&
+  !["Planning", "In Progress", "Completed"].includes(status)
 ) {
   return res.status(400).json({
-    message: "Technologies must be an array of strings",
+    message: "Invalid project status",
   });
 }
 
 
-
-if (!name || !name.trim()) {
-  return res.status(400).json({
-    message: "Project name is required",
-  });
-}
 
 if (
   technologies !== undefined &&
