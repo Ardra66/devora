@@ -6,6 +6,7 @@ const protect = require ("./middleware/authMiddleware")
 const authRoutes = require("./routes/authRoutes");
 const User = require("./models/User");
 const projectRoutes = require("./routes/projectRoutes");
+const codebaseRoutes = require("./routes/codebaseRoutes");
 
 dotenv.config();
 
@@ -17,6 +18,7 @@ app.use(cors());
 app.use(express.json());
 app.use("/api/auth", authRoutes)
 app.use("/api/projects", projectRoutes);
+app.use("/api/codebase", codebaseRoutes);
 
 
 
