@@ -117,8 +117,7 @@ if (technologies !== undefined) {
   updates.technologies = technologies;
 }
 
-if (status !== undefined) {
-  updates.status = status;
+
 if (status !== undefined) {
   if (
     typeof status !== "string" ||
@@ -133,7 +132,9 @@ if (status !== undefined) {
 }
 
 
-}
+
+
+
 
 if (Object.keys(updates).length === 0) {
   return res.status(400).json({
