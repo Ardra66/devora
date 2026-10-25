@@ -8,17 +8,6 @@ const { name, description, technologies, status } = req.body;
 
 
 if (
-  status !== undefined &&
-  !["Planning", "In Progress", "Completed"].includes(status)
-) {
-  return res.status(400).json({
-    message: "Invalid project status",
-  });
-}
-
-
-
-if (
   technologies !== undefined &&
   (!Array.isArray(technologies) ||
     !technologies.every((technology) => typeof technology === "string"))
@@ -116,6 +105,20 @@ if (technologies !== undefined) {
 
 if (status !== undefined) {
   updates.status = status;
+if (status !== undefined) {
+  if (
+    typeof status !== "string" ||
+    !["Planning", "In Progress", "Completed"].includes(status)
+  ) {
+    return res.status(400).json({
+      message: "Invalid project status",
+    });
+  }
+
+  updates.status = status;
+}
+
+
 }
 
 if (Object.keys(updates).length === 0) {
