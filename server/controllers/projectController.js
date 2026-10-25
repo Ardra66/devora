@@ -37,26 +37,54 @@ error: error.message,
 });
 }
 };
-
-
 const getMyProjects = async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 10));
     const skip = (page - 1) * limit;
 
-    const projects = await Project.find({
+    const { search, status } = req.query;
+    console.log("Received status:", status);
+
+if (
+  status &&
+  !["Planning", "In Progress", "Completed"].includes(status)
+) {
+  return res.status(400).json({
+    message: "Invalid project status",
+  });
+}
+
+
+    const filter = {
       owner: req.userId,
-    })
+    };
+
+    if (search && search.trim()) {
+      filter.name = {
+        $regex: search.trim(),
+        $options: "i",
+      };
+    }
+
+    if (status) {
+      if (!["Planning", "In Progress", "Completed"].includes(status)) {
+        return res.status(400).json({
+          message: "Invalid project status",
+        });
+      }
+
+      filter.status = status;
+    }
+
+    const projects = await Project.find(filter)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit);
 
-    const totalProjects = await Project.countDocuments({
-      owner: req.userId,
-    });
+    const totalProjects = await Project.countDocuments(filter);
 
-    res.status(200).json({
+    return res.status(200).json({
       message: "Projects fetched successfully",
       count: projects.length,
       totalProjects,
@@ -65,12 +93,14 @@ const getMyProjects = async (req, res) => {
       projects,
     });
   } catch (error) {
-    res.status(500).json({
+    return res.status(500).json({
       message: "Server error",
       error: error.message,
     });
   }
 };
+
+
 
 
 

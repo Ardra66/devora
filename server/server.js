@@ -17,6 +17,14 @@ app.use(cors());
 app.use(express.json());
 app.use("/api/auth", authRoutes)
 app.use("/api/projects", projectRoutes);
+
+
+app.get("/test-server", (req, res) => {
+  console.log("Test server route reached!");
+  res.status(200).json({ message: "Correct server is running" });
+});
+
+
 app.get("/server-check", (req, res) => {
   res.json({ message: "Correct Devora server is running!" });
 });
