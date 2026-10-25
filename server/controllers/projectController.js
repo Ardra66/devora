@@ -1,13 +1,35 @@
 const Project = require("../models/Project");
 
-// CREATE PROJECT
 const createProject = async (req, res) => {
+
 try {
 const { name, description, technologies, status } = req.body;
+
+if (
+  technologies !== undefined &&
+  (!Array.isArray(technologies) ||
+    !technologies.every((technology) => typeof technology === "string"))
+) {
+  return res.status(400).json({
+    message: "Technologies must be an array of strings",
+  });
+}
+
+
 
 if (!name || !name.trim()) {
   return res.status(400).json({
     message: "Project name is required",
+  });
+}
+
+if (
+  technologies !== undefined &&
+  (!Array.isArray(technologies) ||
+    !technologies.every((technology) => typeof technology === "string"))
+) {
+  return res.status(400).json({
+    message: "Technologies must be an array of strings",
   });
 }
 
@@ -32,7 +54,7 @@ error: error.message,
 }
 };
 
-// GET ALL PROJECTS BELONGING TO THE LOGGED-IN USER
+
 const getMyProjects = async (req, res) => {
 try {
 const projects = await Project.find({
@@ -53,23 +75,21 @@ error: error.message,
 }
 };
 
-// UPDATE PROJECT
+
 const updateProject = async (req, res) => {
 try {
 const { name, description, technologies, status } = req.body;
 
-// TEMPORARY DEBUGGING MESSAGES
+
 console.log("Project ID:", req.params.id);
 console.log("Logged-in User ID:", req.userId);
 
-// Validate project ID
 if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
   return res.status(400).json({
     message: "Invalid project ID",
   });
 }
 
-// Prepare fields to update
 const updates = {};
 
 if (name !== undefined) {
@@ -109,7 +129,6 @@ if (Object.keys(updates).length === 0) {
   });
 }
 
-// Update only a project owned by the logged-in user
 const project = await Project.findOneAndUpdate(
   {
     _id: req.params.id,
@@ -149,7 +168,6 @@ return res.status(500).json({
 
 }
 };
-// DELETE PROJECT
 const deleteProject = async (req, res) => {
   try {
     const project = await Project.findOneAndDelete({
@@ -187,3 +205,6 @@ module.exports = {
   updateProject,
   deleteProject,
 };
+
+
+
