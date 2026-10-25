@@ -6,6 +6,7 @@ name: {
 type: String,
 required: true,
 trim: true,
+minlength: [1, "Project name connot be empty"]
 },
 
 
