@@ -310,4 +310,35 @@ yauzl.fromBuffer(
 });
 });
 
+
+
+
+
+// Get all codebases belonging to the logged-in user
+router.get("/", protect, async (req, res) => {
+  try {
+    const codebases = await Codebase.find({
+      owner: req.userId,
+    }).sort({ createdAt: -1 });
+
+    res.status(200).json({
+      message: "Codebases retrieved successfully!",
+      count: codebases.length,
+      codebases,
+    });
+  } catch (error) {
+    console.error("Get codebases error:", error);
+
+    res.status(500).json({
+      message: "Failed to retrieve codebases.",
+    });
+  }
+});
+
+
+
+
+
+
+
 module.exports = router;
