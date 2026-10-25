@@ -1,7 +1,11 @@
 const express = require("express");
 const multer = require("multer");
 const yauzl = require("yauzl");
+const path = require("path");
+const mongoose = require("mongoose");
 const protect = require("../middleware/authMiddleware");
+const Codebase = require("../models/Codebase");
+const SourceFile = require("../models/SourceFile");
 
 const router = express.Router();
 
@@ -27,39 +31,19 @@ const ignoredFiles = [
 ];
 
 const supportedExtensions = [
-".html",
-".htm",
-".css",
-".js",
-".jsx",
-".ts",
-".tsx",
-".json",
-".md",
-".txt",
-".py",
-".java",
-".c",
-".cpp",
-".h",
-".cs",
-".php",
-".sql",
-".xml",
-".yaml",
-".yml",
-".sh",
+".html", ".htm", ".css", ".js", ".jsx", ".ts", ".tsx",
+".json", ".md", ".txt", ".py", ".java", ".c", ".cpp",
+".h", ".cs", ".php", ".sql", ".xml", ".yaml", ".yml", ".sh",
 ];
 
 const upload = multer({
 storage: multer.memoryStorage(),
-limits: {
-fileSize: 20 * 1024 * 1024,
-},
+limits: { fileSize: 20 * 1024 * 1024 },
 fileFilter: (req, file, callback) => {
 if (!file.originalname.toLowerCase().endsWith(".zip")) {
 return callback(new Error("Only ZIP files are allowed."));
 }
+
 
 callback(null, true);
 
@@ -68,13 +52,11 @@ callback(null, true);
 });
 
 function shouldIgnoreFile(fileName) {
-const pathParts = fileName.split("/").filter(Boolean);
-const baseName = pathParts[pathParts.length - 1].toLowerCase();
+const parts = fileName.split("/").filter(Boolean);
+const baseName = parts[parts.length - 1].toLowerCase();
 
 return (
-pathParts.some((part) =>
-ignoredFolders.includes(part.toLowerCase())
-) ||
+parts.some((part) => ignoredFolders.includes(part.toLowerCase())) ||
 ignoredFiles.includes(baseName) ||
 baseName.endsWith(".pem") ||
 baseName.endsWith(".key")
@@ -82,25 +64,30 @@ baseName.endsWith(".key")
 }
 
 function isSupportedTextFile(fileName) {
-const lowerName = fileName.toLowerCase();
-
 return supportedExtensions.some((extension) =>
-lowerName.endsWith(extension)
+fileName.toLowerCase().endsWith(extension)
 );
 }
 
 router.post("/upload", protect, (req, res) => {
+    console.log("DEVORA: ZIP upload route reached");
 upload.single("project")(req, res, (uploadError) => {
+    console.log("ZIP upload error:", uploadError);
 if (uploadError) {
-return res.status(400).json({
-message: uploadError.message || "File upload failed.",
-});
+  console.error("ZIP UPLOAD ERROR:", uploadError.stack || uploadError);
 }
 
+console.log("Received file:", req.file);
 
 if (!req.file) {
   return res.status(400).json({
     message: "Please upload a ZIP file.",
+  });
+}
+
+if (!mongoose.isValidObjectId(req.userId)) {
+  return res.status(401).json({
+    message: "Invalid authenticated user.",
   });
 }
 
@@ -121,8 +108,6 @@ yauzl.fromBuffer(
     let totalUncompressedSize = 0;
     let totalSourceSize = 0;
     let finished = false;
-
-    const detectedFiles = [];
     const sourceFiles = [];
 
     function finishWithError(message) {
@@ -193,6 +178,7 @@ yauzl.fromBuffer(
 
         const chunks = [];
         let currentSize = 0;
+        let sourceLimitExceeded = false;
 
         readStream.on("data", (chunk) => {
           currentSize += chunk.length;
@@ -201,19 +187,18 @@ yauzl.fromBuffer(
             currentSize > MAX_FILE_SIZE ||
             totalSourceSize + currentSize > MAX_TOTAL_SOURCE_SIZE
           ) {
-            readStream.destroy(
-              new Error("Source content limit exceeded.")
-            );
+            sourceLimitExceeded = true;
+            readStream.destroy();
             return;
           }
 
           chunks.push(chunk);
         });
 
-        readStream.on("error", (error) => {
+        readStream.on("error", () => {
           if (finished) return;
 
-          if (error.message === "Source content limit exceeded.") {
+          if (sourceLimitExceeded) {
             return finishWithError(
               "Source code exceeds the allowed reading limit."
             );
@@ -225,20 +210,25 @@ yauzl.fromBuffer(
         readStream.on("end", () => {
           if (finished) return;
 
+          if (sourceLimitExceeded) {
+            return finishWithError(
+              "Source code exceeds the allowed reading limit."
+            );
+          }
+
           const content = Buffer.concat(chunks).toString("utf8");
 
-          // Skip files that appear to contain binary data.
           if (content.includes("\u0000")) {
             zipFile.readEntry();
             return;
           }
 
           totalSourceSize += currentSize;
-          detectedFiles.push(fileName);
 
           sourceFiles.push({
             path: fileName,
             content,
+            extension: path.extname(fileName).toLowerCase(),
           });
 
           zipFile.readEntry();
@@ -246,19 +236,70 @@ yauzl.fromBuffer(
       });
     });
 
-    zipFile.on("end", () => {
+    zipFile.on("end", async () => {
       if (finished) return;
 
       finished = true;
 
-      return res.status(200).json({
-        message: "ZIP source files read successfully!",
-        fileName: req.file.originalname,
-        fileCount,
-        totalUncompressedSize,
-        detectedFiles,
-        sourceFiles,
-      });
+      let createdCodebase;
+
+      try {
+        const originalFileName = req.file.originalname;
+        const name = path.basename(originalFileName, ".zip");
+
+        createdCodebase = await Codebase.create({
+          name,
+          originalFileName,
+          owner: req.userId,
+          fileCount: sourceFiles.length,
+          status: "Processing",
+        });
+
+        if (sourceFiles.length > 0) {
+          const documents = sourceFiles.map((file) => ({
+            codebase: createdCodebase._id,
+            owner: req.userId,
+            path: file.path,
+            content: file.content,
+            extension: file.extension,
+          }));
+
+          await SourceFile.insertMany(documents, {
+            ordered: true,
+          });
+        }
+
+        createdCodebase.status = "Ready";
+        await createdCodebase.save();
+
+        return res.status(201).json({
+          message: "Codebase uploaded and saved successfully!",
+          codebase: {
+            id: createdCodebase._id,
+            name: createdCodebase.name,
+            originalFileName: createdCodebase.originalFileName,
+            fileCount: createdCodebase.fileCount,
+            status: createdCodebase.status,
+          },
+          detectedFiles: sourceFiles.map((file) => file.path),
+        });
+      } catch (error) {
+        if (createdCodebase) {
+          await SourceFile.deleteMany({
+            codebase: createdCodebase._id,
+          }).catch(() => {});
+
+          await Codebase.deleteOne({
+            _id: createdCodebase._id,
+          }).catch(() => {});
+        }
+
+        console.error("Codebase save error:", error);
+
+        return res.status(500).json({
+          message: "Failed to save the codebase to the database.",
+        });
+      }
     });
 
     zipFile.readEntry();
