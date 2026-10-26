@@ -63,7 +63,10 @@ const initialProjects = [
 function App() {
   const [selectedCodebase, setSelectedCodebase] = useState(null);
 const [sourceFiles, setSourceFiles] = useState([]);
+
 const [sourceFilesLoading, setSourceFilesLoading] = useState(false);
+const [selectedSourceFile, setSelectedSourceFile] = useState(null);
+const [sourceContentLoading, setSourceContentLoading] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(
   Boolean(localStorage.getItem("devoraToken"))
   
@@ -161,7 +164,22 @@ const handleViewCodebase = async (codebase) => {
   }
 };
 
+const handleViewSourceFile = async (codebase, file) => {
+  setSelectedSourceFile(null);
+  setSourceContentLoading(true);
 
+  try {
+    const data = await apiRequest(
+      `/api/codebase/${codebase._id}/files/${file._id}`
+    );
+
+    setSelectedSourceFile(data.file);
+  } catch (error) {
+    setNotification(error.message || "Failed to load source code.");
+  } finally {
+    setSourceContentLoading(false);
+  }
+};
 
 
 
@@ -728,28 +746,81 @@ const handleCreateProject = async (event) => {
       <p>Loading source files...</p>
     ) : sourceFiles.length > 0 ? (
       <div className="project-grid">
-        {sourceFiles.map((file) => (
-          <article
-            className="project-card project-cyan"
-            key={file._id}
-          >
-            <div className="project-symbol">
-              <Code2 size={23} />
-            </div>
+       
+{sourceFiles.map((file) => (
+  <article
+    className="project-card project-cyan"
+    key={file._id}
+    onClick={() => handleViewSourceFile(selectedCodebase, file)}
+    style={{ cursor: "pointer" }}
+  >
+    <div className="project-symbol">
+      <Code2 size={23} />
+    </div>
 
-            <h3>{file.path}</h3>
+    <h3>{file.path}</h3>
 
-            <p className="project-description">
-              {file.extension || "Source file"}
-            </p>
-          </article>
-        ))}
+    <p className="project-description">
+      {file.extension || "Source file"}
+    </p>
+
+    <span>Click to view source code →</span>
+  </article>
+))}
+
+        
       </div>
     ) : (
       <p>No source files found.</p>
     )}
   </section>
 )}
+
+
+{selectedSourceFile && (
+  <div className="project-card project-cyan" style={{ marginTop: "24px" }}>
+    <div className="projects-heading">
+      <div>
+        <div className="section-overline">
+          <span>SOURCE CODE</span>
+        </div>
+        <h2>{selectedSourceFile.path}</h2>
+      </div>
+
+      <button
+        className="neon-button small-neon-button"
+        onClick={() => setSelectedSourceFile(null)}
+      >
+        Close
+      </button>
+    </div>
+
+    {sourceContentLoading ? (
+      <p>Loading source code...</p>
+    ) : (
+      <pre
+        style={{
+          overflowX: "auto",
+          maxHeight: "500px",
+          overflowY: "auto",
+          padding: "16px",
+          borderRadius: "8px",
+          background: "#101820",
+          color: "#dfff00",
+          whiteSpace: "pre",
+          fontSize: "13px",
+          lineHeight: "1.6",
+        }}
+      >
+        <code>{selectedSourceFile.content}</code>
+      </pre>
+    )}
+  </div>
+)}
+
+
+
+
 
 
 
