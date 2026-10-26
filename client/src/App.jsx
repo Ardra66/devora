@@ -3,13 +3,11 @@ import Login from "./Login";
 import { useEffect, useState } from "react";
 import {
   Activity,
-  ArrowDownRight,
   ArrowUpRight,
   Bell,
   Bot,
   CheckCircle2,
   ChevronRight,
-  CircleHelp,
   Code2,
   Command,
   Cpu,
@@ -60,27 +58,31 @@ const initialProjects = [
   },
 ];
 
+const normalizePath = (path) =>
+  (path || "")
+    .replace(/\\/g, "/")
+    .replace(/^\/+|\/+$/g, "");
+
 function App() {
   const [selectedCodebase, setSelectedCodebase] = useState(null);
-const [sourceFiles, setSourceFiles] = useState([]);
-const [codeAnalysis, setCodeAnalysis] = useState(null);
+  const [sourceFiles, setSourceFiles] = useState([]);
+  const [codeAnalysis, setCodeAnalysis] = useState(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [chatQuestion, setChatQuestion] = useState("");
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [sourceFilesLoading, setSourceFilesLoading] = useState(false);
+  const [selectedSourceFile, setSelectedSourceFile] = useState(null);
+  const [sourceContentLoading, setSourceContentLoading] = useState(false);
 
-const [chatQuestion, setChatQuestion] = useState("");
-const [chatMessages, setChatMessages] = useState([]);
-const [chatLoading, setChatLoading] = useState(false);
-
-const [sourceFilesLoading, setSourceFilesLoading] = useState(false);
-const [selectedSourceFile, setSelectedSourceFile] = useState(null);
-const [sourceContentLoading, setSourceContentLoading] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(
-  Boolean(localStorage.getItem("devoraToken"))
-  
-);
+    Boolean(localStorage.getItem("devoraToken"))
+  );
   const [activePage, setActivePage] = useState("Dashboard");
   const [projects, setProjects] = useState(initialProjects);
   const [codebases, setCodebases] = useState([]);
-const [codebasesLoading, setCodebasesLoading] = useState(true);
-const [codebasesError, setCodebasesError] = useState("");
+  const [codebasesLoading, setCodebasesLoading] = useState(true);
+  const [codebasesError, setCodebasesError] = useState("");
   const [searchText, setSearchText] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [projectName, setProjectName] = useState("");
@@ -89,15 +91,20 @@ const [codebasesError, setCodebasesError] = useState("");
   const [mobileMenu, setMobileMenu] = useState(false);
   const [notification, setNotification] = useState("");
 
-
-  // Fetch existing projects
   useEffect(() => {
+    if (!notification) return undefined;
+
+    const timer = window.setTimeout(() => setNotification(""), 3000);
+
+    return () => window.clearTimeout(timer);
+  }, [notification]);
+
+  useEffect(() => {
+    if (!localStorage.getItem("devoraToken")) return;
+
     const fetchProjects = async () => {
       try {
         const data = await apiRequest("/api/projects");
-
-        console.log("API response:", data);
-        console.log("Projects received:", data.projects);
 
         const fetchedProjects = Array.isArray(data)
           ? data
@@ -109,13 +116,15 @@ const [codebasesError, setCodebasesError] = useState("");
       }
     };
 
-    if (localStorage.getItem("devoraToken")) {
-      fetchProjects();
-    }
+    fetchProjects();
   }, []);
 
-  // Fetch uploaded codebases
   useEffect(() => {
+    if (!localStorage.getItem("devoraToken")) {
+      setCodebasesLoading(false);
+      return;
+    }
+
     const fetchCodebases = async () => {
       try {
         const data = await apiRequest("/api/codebase");
@@ -130,15 +139,21 @@ const [codebasesError, setCodebasesError] = useState("");
       }
     };
 
-    if (localStorage.getItem("devoraToken")) {
-      fetchCodebases();
-    } else {
-      setCodebasesLoading(false);
-    }
+    fetchCodebases();
+  }, []);
+
+  useEffect(() => {
+    const handleMouseMove = (event) => {
+      setCursor({ x: event.clientX, y: event.clientY });
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+
+    return () => window.removeEventListener("mousemove", handleMouseMove);
   }, []);
 
   const filteredProjects = projects.filter((project) =>
-    project.name.toLowerCase().includes(searchText.toLowerCase())
+    (project.name || "").toLowerCase().includes(searchText.toLowerCase())
   );
 
   const inProgressCount = projects.filter(
@@ -149,146 +164,237 @@ const [codebasesError, setCodebasesError] = useState("");
     (project) => project.status === "Completed"
   ).length;
 
+  const handleViewCodebase = async (codebase) => {
+    setSelectedCodebase(codebase);
+    setSelectedSourceFile(null);
+    setCodeAnalysis(null);
+    setSourceFiles([]);
+    setSourceFilesLoading(true);
 
+    try {
+      const data = await apiRequest(
+        `/api/codebase/${codebase._id}/files`
+      );
 
-const handleViewCodebase = async (codebase) => {
-  setSelectedCodebase(codebase);
-  setSourceFiles([]);
-  setSourceFilesLoading(true);
+      setSourceFiles(data.files || []);
+    } catch (error) {
+      setNotification(error.message || "Failed to load source files.");
+    } finally {
+      setSourceFilesLoading(false);
+    }
+  };
 
-  try {
-    const data = await apiRequest(
-      `/api/codebase/${codebase._id}/files`
-    );
+  const handleViewSourceFile = async (codebase, file) => {
+    if (!codebase || !file) return;
 
-    setSourceFiles(data.files || []);
-  } catch (error) {
-    setNotification(error.message || "Failed to load source files.");
-  } finally {
-    setSourceFilesLoading(false);
-  }
-};
+    setSelectedCodebase(codebase);
+    setSelectedSourceFile({
+      ...file,
+      content: file.content || "",
+    });
+    setCodeAnalysis(null);
+    setSourceContentLoading(true);
 
-const handleViewSourceFile = async (codebase, file) => {
-  setSelectedSourceFile(null);
-  setSourceContentLoading(true);
+    try {
+      const data = await apiRequest(
+        `/api/codebase/${codebase._id}/files/${file._id}`
+      );
 
-  try {
-    const data = await apiRequest(
-      `/api/codebase/${codebase._id}/files/${file._id}`
-    );
+      setSelectedSourceFile(data.file || data);
+    } catch (error) {
+      setNotification(error.message || "Failed to load source code.");
+    } finally {
+      setSourceContentLoading(false);
+    }
+  };
 
-    setSelectedSourceFile(data.file);
-  } catch (error) {
-    setNotification(error.message || "Failed to load source code.");
-  } finally {
-    setSourceContentLoading(false);
-  }
-};
+  const handleOpenRelevantCode = async (match) => {
+    if (!selectedCodebase) {
+      setNotification("Please select a codebase first.");
+      return;
+    }
 
-const handleAnalyzeCode = async () => {
-  if (!selectedCodebase || !selectedSourceFile) return;
+    setSourceFilesLoading(true);
 
-  setAnalysisLoading(true);
-  setCodeAnalysis(null);
+    try {
+      const data = await apiRequest(
+        `/api/codebase/${selectedCodebase._id}/files`
+      );
 
-  try {
-    const data = await apiRequest(
-      `/api/analysis/${selectedCodebase._id}/${selectedSourceFile._id}`,
-      { method: "POST" }
-    );
-console.log("Gemini API response:", data);
-setCodeAnalysis(data.analysis);;
-  } catch (error) {
-    setNotification(error.message || "Code analysis failed.");
-  } finally {
-    setAnalysisLoading(false);
-  }
-};
+      const files = data.files || [];
 
-const handleSendChat = async (event) => {
-  event.preventDefault();
+      setSourceFiles(files);
 
-  if (!selectedCodebase) {
-    setNotification("Please select an uploaded codebase first.");
-    return;
-  }
+      const matchPath = normalizePath(match.fileName);
 
-  if (!chatQuestion.trim() || chatLoading) return;
+      const matchingFile = files.find((file) => {
+        const filePath = normalizePath(file.path);
 
-  const question = chatQuestion.trim();
+        return (
+          filePath === matchPath ||
+          filePath.endsWith(`/${matchPath}`) ||
+          matchPath.endsWith(`/${filePath}`)
+        );
+      });
 
-  setChatMessages((previous) => [
-    ...previous,
-    { role: "user", content: question },
-  ]);
-
-  setChatQuestion("");
-  setChatLoading(true);
-
-  try {
-    const data = await apiRequest(
-      `/api/project-chat/${selectedCodebase._id}`,
-      {
-        method: "POST",
-        body: JSON.stringify({ question }),
+      if (!matchingFile) {
+        setNotification(
+          `Could not find "${match.fileName}" in the selected codebase.`
+        );
+        return;
       }
-    );
 
-    setChatMessages((previous) => [
-      ...previous,
-      {
-        role: "assistant",
-        content: data.answer || "No answer was returned.",
-        matches: data.matches || [],
-      },
-    ]);
-  } catch (error) {
-    setChatMessages((previous) => [
-      ...previous,
-      {
-        role: "assistant",
-        content: error.message || "Failed to get an answer.",
-      },
-    ]);
-  } finally {
-    setChatLoading(false);
-  }
-};
+      setActivePage("Dashboard");
 
-const handleCreateProject = async (event) => {
-  event.preventDefault();
+      await handleViewSourceFile(
+        selectedCodebase,
+        matchingFile
+      );
+    } catch (error) {
+      setNotification(
+        error.message || "Failed to open source file."
+      );
+    } finally {
+      setSourceFilesLoading(false);
+    }
+  };
 
-  if (!projectName.trim()) return;
+  const handleAnalyzeCode = () => {
+    if (!selectedSourceFile) {
+      setNotification("Please select a source file first.");
+      return;
+    }
 
-  try {
-    const newProject = await apiRequest("/api/projects", {
-      method: "POST",
-      body: JSON.stringify({
-        name: projectName.trim(),
-        description:
-          projectDescription.trim() || "Your new development project",
-        technologies: ["React"],
-        status: "Planning",
-      }),
+    setAnalysisLoading(true);
+
+    const content = selectedSourceFile.content || "";
+    const lines = content.split(/\r?\n/);
+
+    const extension = (selectedSourceFile.path || "")
+      .split(".")
+      .pop()
+      .toLowerCase();
+
+    const languageByExtension = {
+      js: "JavaScript",
+      jsx: "React JSX",
+      ts: "TypeScript",
+      tsx: "React TypeScript",
+      html: "HTML",
+      css: "CSS",
+      json: "JSON",
+      py: "Python",
+      java: "Java",
+      c: "C",
+      cpp: "C++",
+      md: "Markdown",
+    };
+
+    setCodeAnalysis({
+      fileName:
+        selectedSourceFile.path ||
+        selectedSourceFile.fileName ||
+        "Unknown file",
+      language:
+        languageByExtension[extension] ||
+        extension.toUpperCase() ||
+        "Unknown",
+      totalLines: lines.length,
+      totalCharacters: content.length,
+      emptyLines: lines.filter((line) => !line.trim()).length,
+      note:
+        "This is a basic local file summary. AI-powered code analysis can be connected to a backend endpoint later.",
+      result:
+        `Basic file summary\n\n` +
+        `• Lines: ${lines.length}\n` +
+        `• Characters: ${content.length}\n` +
+        `• Empty lines: ${lines.filter((line) => !line.trim()).length}\n\n` +
+        "This summary is calculated from the source file currently displayed.",
     });
 
-    const createdProject = newProject.project || newProject;
+    setAnalysisLoading(false);
+  };
 
-    setProjects((previous) => [createdProject, ...previous]);
-    setProjectName("");
-    setProjectDescription("");
-    setShowCreate(false);
-    setActivePage("My Projects");
-    setNotification("Project created successfully!");
-  } catch (error) {
-    setNotification(error.message || "Failed to create project.");
-  }
+  const handleSendChat = async (event) => {
+    event.preventDefault();
 
-  window.setTimeout(() => setNotification(""), 3000);
-};
+    if (!selectedCodebase) {
+      setNotification("Please select an uploaded codebase first.");
+      return;
+    }
 
+    if (!chatQuestion.trim() || chatLoading) return;
 
+    const question = chatQuestion.trim();
+
+    setChatMessages((previous) => [
+      ...previous,
+      { role: "user", content: question },
+    ]);
+
+    setChatQuestion("");
+    setChatLoading(true);
+
+    try {
+      const data = await apiRequest(
+        `/api/project-chat/${selectedCodebase._id}`,
+        {
+          method: "POST",
+          body: JSON.stringify({ question }),
+        }
+      );
+
+      setChatMessages((previous) => [
+        ...previous,
+        {
+          role: "assistant",
+          content: data.answer || "No answer was returned.",
+          matches: data.matches || [],
+        },
+      ]);
+    } catch (error) {
+      setChatMessages((previous) => [
+        ...previous,
+        {
+          role: "assistant",
+          content: error.message || "Failed to get an answer.",
+        },
+      ]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  const handleCreateProject = async (event) => {
+    event.preventDefault();
+
+    if (!projectName.trim()) return;
+
+    try {
+      const newProject = await apiRequest("/api/projects", {
+        method: "POST",
+        body: JSON.stringify({
+          name: projectName.trim(),
+          description:
+            projectDescription.trim() ||
+            "Your new development project",
+          technologies: ["React"],
+          status: "Planning",
+        }),
+      });
+
+      const createdProject = newProject.project || newProject;
+
+      setProjects((previous) => [createdProject, ...previous]);
+      setProjectName("");
+      setProjectDescription("");
+      setShowCreate(false);
+      setActivePage("My Projects");
+      setNotification("Project created successfully!");
+    } catch (error) {
+      setNotification(error.message || "Failed to create project.");
+    }
+  };
 
   const handleMenuClick = (label) => {
     setActivePage(label);
@@ -296,18 +402,85 @@ const handleCreateProject = async (event) => {
   };
 
   if (!isLoggedIn) {
-  return <Login onLogin={() => setIsLoggedIn(true)} />;
-}
+    return <Login onLogin={() => setIsLoggedIn(true)} />;
+  }
+
+  const renderProjectCards = () =>
+    filteredProjects.length ? (
+      <div className="project-grid">
+        {filteredProjects.map((project, index) => (
+          <article
+            className={`project-card project-${project.color || "green"}`}
+            key={project._id || project.id || project.name}
+            style={{ animationDelay: `${index * 100}ms` }}
+          >
+            <div className="project-card-top">
+              <div className="project-symbol">
+                <Code2 size={23} />
+              </div>
+
+              <span
+                className={`project-status status-${(
+                  project.status || "Planning"
+                )
+                  .toLowerCase()
+                  .replace(/\s+/g, "-")}`}
+              >
+                <span />
+                {project.status || "Planning"}
+              </span>
+            </div>
+
+            <h3>{project.name}</h3>
+
+            <p className="project-description">
+              {project.description}
+            </p>
+
+            <div className="technology-list">
+              {(Array.isArray(project.technologies)
+                ? project.technologies
+                : []
+              ).map((technology) => (
+                <span key={technology}>{technology}</span>
+              ))}
+            </div>
+
+            <div className="project-card-footer">
+              <span>
+                PROJECT /{" "}
+                {String(project._id || project.id || "000")
+                  .slice(-3)
+                  .toUpperCase()}
+              </span>
+
+              <button
+                aria-label={`View ${project.name}`}
+                onClick={() =>
+                  setNotification(`${project.name} selected.`)
+                }
+              >
+                <ArrowUpRight size={18} />
+              </button>
+            </div>
+          </article>
+        ))}
+      </div>
+    ) : (
+      <div className="no-projects">
+        <Search size={26} />
+        <h3>No matching projects</h3>
+        <p>Try another search term.</p>
+      </div>
+    );
 
   return (
     <div className="devora-app">
       <div
         className="cursor-glow"
-        style={{
-          left: cursor.x,
-          top: cursor.y,
-        }}
+        style={{ left: cursor.x, top: cursor.y }}
       />
+
       <div className="background-orb orb-one" />
       <div className="background-orb orb-two" />
 
@@ -316,10 +489,12 @@ const handleCreateProject = async (event) => {
           <div className="brand-icon">
             <Command size={22} strokeWidth={2.5} />
           </div>
+
           <div className="brand-name">
             DEVORA<span>AI</span>
             <small>INTELLIGENCE PLATFORM</small>
           </div>
+
           <button
             className="mobile-close"
             onClick={() => setMobileMenu(false)}
@@ -331,10 +506,12 @@ const handleCreateProject = async (event) => {
 
         <div className="workspace-switcher">
           <div className="workspace-avatar">D</div>
+
           <div className="workspace-info">
             <strong>My Workspace</strong>
             <span>Personal workspace</span>
           </div>
+
           <span className="online-indicator" />
         </div>
 
@@ -351,9 +528,11 @@ const handleCreateProject = async (event) => {
             >
               <Icon size={19} strokeWidth={1.8} />
               <span>{label}</span>
+
               {label === "AI Assistant" && (
                 <span className="nav-new">AI</span>
               )}
+
               {activePage === label && (
                 <span className="nav-indicator" />
               )}
@@ -367,10 +546,7 @@ const handleCreateProject = async (event) => {
 
         <button
           className="nav-item"
-          onClick={() => {
-            setActivePage("Terminal");
-            setMobileMenu(false);
-          }}
+          onClick={() => handleMenuClick("Terminal")}
         >
           <Terminal size={19} strokeWidth={1.8} />
           <span>Terminal</span>
@@ -379,10 +555,7 @@ const handleCreateProject = async (event) => {
 
         <button
           className="nav-item"
-          onClick={() => {
-            setActivePage("System Status");
-            setMobileMenu(false);
-          }}
+          onClick={() => handleMenuClick("System Status")}
         >
           <Activity size={19} strokeWidth={1.8} />
           <span>System Status</span>
@@ -394,22 +567,28 @@ const handleCreateProject = async (event) => {
             <div className="upgrade-icon">
               <Zap size={20} />
             </div>
+
             <h4>Unlock your potential</h4>
             <p>Your next great idea starts here.</p>
-            <button onClick={() => setActivePage("AI Assistant")}>
+
+            <button
+              onClick={() => handleMenuClick("AI Assistant")}
+            >
               Explore AI <ArrowUpRight size={15} />
             </button>
           </div>
 
           <div className="profile-row">
             <div className="profile-avatar">A</div>
+
             <div className="profile-info">
               <strong>Developer</strong>
               <span>Free plan</span>
             </div>
+
             <button
               className="icon-button profile-settings"
-              onClick={() => setActivePage("Settings")}
+              onClick={() => handleMenuClick("Settings")}
               aria-label="Open settings"
             >
               <Settings size={17} />
@@ -436,6 +615,7 @@ const handleCreateProject = async (event) => {
             >
               <Menu size={21} />
             </button>
+
             <div className="page-breadcrumb">
               <span>Workspace</span>
               <ChevronRight size={14} />
@@ -452,10 +632,7 @@ const handleCreateProject = async (event) => {
             <button
               className="icon-button notification-button"
               aria-label="Notifications"
-              onClick={() => {
-                setNotification("You're all caught up!");
-                window.setTimeout(() => setNotification(""), 3000);
-              }}
+              onClick={() => setNotification("You're all caught up!")}
             >
               <Bell size={18} />
               <span className="notification-dot" />
@@ -474,7 +651,7 @@ const handleCreateProject = async (event) => {
         </header>
 
         {notification && (
-          <div className="toast-message">
+          <div className="toast-message" role="status">
             <CheckCircle2 size={17} />
             {notification}
           </div>
@@ -538,12 +715,15 @@ const handleCreateProject = async (event) => {
                   <div className="core-icon">
                     <Cpu size={43} strokeWidth={1.3} />
                   </div>
+
                   <div className="core-spark spark-one">
                     <Sparkles size={18} />
                   </div>
+
                   <div className="core-spark spark-two">
                     <Zap size={19} />
                   </div>
+
                   <div className="core-spark spark-three">
                     <Code2 size={17} />
                   </div>
@@ -553,6 +733,7 @@ const handleCreateProject = async (event) => {
                   <span className="chip-dot" />
                   AI ENGINE ACTIVE
                 </div>
+
                 <div className="floating-chip chip-bottom">
                   <Activity size={15} />
                   <span>System optimized</span>
@@ -578,13 +759,16 @@ const handleCreateProject = async (event) => {
                     </div>
                     <span className="stat-tag">TOTAL</span>
                   </div>
+
                   <p>Total projects</p>
+
                   <div className="stat-number-row">
                     <h2>{String(projects.length).padStart(2, "0")}</h2>
                     <span className="stat-trend">
                       <ArrowUpRight size={14} /> WORKSPACE
                     </span>
                   </div>
+
                   <div className="stat-bottom-line">
                     <span style={{ width: "75%" }} />
                   </div>
@@ -597,13 +781,16 @@ const handleCreateProject = async (event) => {
                     </div>
                     <span className="stat-tag">ACTIVE</span>
                   </div>
+
                   <p>In progress</p>
+
                   <div className="stat-number-row">
                     <h2>{String(inProgressCount).padStart(2, "0")}</h2>
                     <span className="stat-trend">
                       <ArrowUpRight size={14} /> BUILDING
                     </span>
                   </div>
+
                   <div className="stat-bottom-line">
                     <span style={{ width: "48%" }} />
                   </div>
@@ -616,13 +803,16 @@ const handleCreateProject = async (event) => {
                     </div>
                     <span className="stat-tag">SHIPPED</span>
                   </div>
+
                   <p>Completed</p>
+
                   <div className="stat-number-row">
                     <h2>{String(completedCount).padStart(2, "0")}</h2>
                     <span className="stat-trend">
                       <ArrowUpRight size={14} /> COMPLETE
                     </span>
                   </div>
+
                   <div className="stat-bottom-line">
                     <span style={{ width: "58%" }} />
                   </div>
@@ -636,9 +826,7 @@ const handleCreateProject = async (event) => {
                   <div className="section-overline">
                     <span>PROJECT DIRECTORY</span>
                   </div>
-                  <h2>
-                    Recent <span>projects.</span>
-                  </h2>
+                  <h2>Recent <span>projects.</span></h2>
                   <p>Your ideas, organized and ready to evolve.</p>
                 </div>
 
@@ -646,10 +834,9 @@ const handleCreateProject = async (event) => {
                   <label className="search-box">
                     <Search size={17} />
                     <input
-                      type="text"
-                      placeholder="Search projects..."
                       value={searchText}
                       onChange={(event) => setSearchText(event.target.value)}
+                      placeholder="Search projects..."
                     />
                     <span className="search-shortcut">/</span>
                   </label>
@@ -664,304 +851,209 @@ const handleCreateProject = async (event) => {
                 </div>
               </div>
 
-              {filteredProjects.length > 0 ? (
+              {renderProjectCards()}
+            </section>
+
+            <section className="projects-section">
+              <div className="projects-heading">
+                <div>
+                  <div className="section-overline">
+                    <span>CODEBASE DIRECTORY</span>
+                  </div>
+                  <h2>Uploaded <span>codebases.</span></h2>
+                  <p>Your uploaded source code, ready to explore.</p>
+                </div>
+              </div>
+
+              {codebasesLoading ? (
+                <p>Loading codebases...</p>
+              ) : codebasesError ? (
+                <p>{codebasesError}</p>
+              ) : codebases.length === 0 ? (
+                <p>No codebases uploaded yet.</p>
+              ) : (
                 <div className="project-grid">
-                  {filteredProjects.map((project, index) => (
+                  {codebases.map((codebase) => (
                     <article
-                      className={`project-card project-${project.color}`}
-                     key={project._id || project.id}
-                      style={{ animationDelay: `${index * 100}ms` }}
+                      className="project-card project-cyan"
+                      key={codebase._id}
+                      onClick={() => handleViewCodebase(codebase)}
+                      style={{ cursor: "pointer" }}
                     >
                       <div className="project-card-top">
                         <div className="project-symbol">
-                          {project.color === "cyan" ? (
-                            <Code2 size={23} />
-                          ) : project.color === "purple" ? (
-                            <Sparkles size={23} />
-                          ) : (
-                            <Terminal size={23} />
-                          )}
+                          <Code2 size={23} />
                         </div>
-                        <span
-                          className={`project-status status-${project.status
-                            .toLowerCase()
-                            .replace(" ", "-")}`}
-                        >
+                        <span className="project-status">
                           <span />
-                          {project.status}
+                          {codebase.status}
                         </span>
                       </div>
 
-                      <h3>{project.name}</h3>
+                      <h3>{codebase.name}</h3>
+
                       <p className="project-description">
-                        {project.description}
+                        {codebase.originalFileName}
                       </p>
 
                       <div className="technology-list">
-                        {project.technologies.map((technology) => (
-                          <span key={technology}>{technology}</span>
-                        ))}
+                        <span>{codebase.fileCount ?? 0} files</span>
                       </div>
 
                       <div className="project-card-footer">
-                        <span>PROJECT / {String(project.id).padStart(3, "0")}</span>
-                        <button
-                          aria-label={`View ${project.name}`}
-                          onClick={() => {
-                            setNotification(
-                              `${project.name} selected in this preview.`
-                            );
-                            window.setTimeout(() => setNotification(""), 3000);
-                          }}
-                        >
-                          <ArrowUpRight size={18} />
-                        </button>
+                        <span>UPLOADED CODEBASE</span>
                       </div>
                     </article>
                   ))}
                 </div>
-              ) : (
-                <div className="no-projects">
-                  <Search size={26} />
-                  <h3>No matching projects</h3>
-                  <p>Try another search term.</p>
-                </div>
               )}
             </section>
 
+            {selectedCodebase && (
+              <section className="projects-section">
+                <div className="projects-heading">
+                  <div>
+                    <div className="section-overline">
+                      <span>SOURCE EXPLORER</span>
+                    </div>
+                    <h2>
+                      {selectedCodebase.name} <span>files.</span>
+                    </h2>
+                  </div>
 
-<section className="projects-section">
-  <div className="projects-heading">
-    <div>
-      <div className="section-overline">
-        <span>CODEBASE DIRECTORY</span>
-      </div>
-      <h2>
-        Uploaded <span>codebases.</span>
-      </h2>
-      <p>Your uploaded source code, ready to explore.</p>
-    </div>
-  </div>
+                  <button
+                    className="neon-button small-neon-button"
+                    onClick={() => {
+                      setSelectedCodebase(null);
+                      setSourceFiles([]);
+                      setSelectedSourceFile(null);
+                      setCodeAnalysis(null);
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
 
-  {codebasesLoading ? (
-    <p>Loading codebases...</p>
-  ) : codebasesError ? (
-    <p>{codebasesError}</p>
-  ) : codebases.length === 0 ? (
-    <p>No codebases uploaded yet.</p>
-  ) : (
-    <div className="project-grid">
-      {codebases.map((codebase) => (
-        <article className="project-card project-cyan"
-         key={codebase._id} 
-         onClick={() => handleViewCodebase(codebase)}
-          style={{ cursor: "pointer" }} >
+                {sourceFilesLoading ? (
+                  <p>Loading source files...</p>
+                ) : sourceFiles.length > 0 ? (
+                  <div className="project-grid">
+                    {sourceFiles.map((file) => (
+                      <article
+                        className="project-card project-cyan"
+                        key={file._id}
+                        onClick={() =>
+                          handleViewSourceFile(selectedCodebase, file)
+                        }
+                        style={{ cursor: "pointer" }}
+                      >
+                        <div className="project-symbol">
+                          <Code2 size={23} />
+                        </div>
+                        <h3>{file.path}</h3>
+                        <p className="project-description">
+                          {file.extension || "Source file"}
+                        </p>
+                        <span>Click to view source code →</span>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p>No source files found.</p>
+                )}
+              </section>
+            )}
 
-          <div className="project-card-top">
-            <div className="project-symbol">
-              <Code2 size={23} />
-            </div>
-            <span className="project-status">
-              <span />
-              {codebase.status}
-            </span>
-          </div>
+            {selectedSourceFile && (
+              <section className="projects-section">
+                <div className="projects-heading">
+                  <div>
+                    <div className="section-overline">
+                      <span>SOURCE CODE</span>
+                    </div>
+                    <h2>
+                      {selectedSourceFile.path ||
+                        selectedSourceFile.fileName}
+                    </h2>
+                  </div>
 
-          <h3>{codebase.name}</h3>
+                  <button
+                    className="neon-button small-neon-button"
+                    onClick={() => setSelectedSourceFile(null)}
+                  >
+                    Close
+                  </button>
+                </div>
 
-          <p className="project-description">
-            {codebase.originalFileName}
-          </p>
+                <button
+                  className="neon-button"
+                  onClick={handleAnalyzeCode}
+                  disabled={analysisLoading || sourceContentLoading}
+                >
+                  {analysisLoading ? "Analyzing..." : "Analyze Code"}
+                </button>
 
-          <div className="technology-list">
-            <span>{codebase.fileCount} files</span>
-          </div>
+                {sourceContentLoading ? (
+                  <p>Loading source code...</p>
+                ) : (
+                  <pre
+                    style={{
+                      overflowX: "auto",
+                      maxHeight: "500px",
+                      overflowY: "auto",
+                      padding: "16px",
+                      borderRadius: "8px",
+                      background: "#101820",
+                      color: "#dfff00",
+                      whiteSpace: "pre",
+                      fontSize: "13px",
+                      lineHeight: "1.6",
+                    }}
+                  >
+                    <code>{selectedSourceFile.content || ""}</code>
+                  </pre>
+                )}
 
-          <div className="project-card-footer">
-            <span>UPLOADED CODEBASE</span>
-          </div>
-        </article>
-      ))}
-    </div>
-  )}
-</section>
+                {codeAnalysis && (
+                  <div
+                    className="project-card project-cyan"
+                    style={{ marginTop: "20px", padding: "20px" }}
+                  >
+                    <h3>🤖 Devora AI Analysis</h3>
+                    <p><strong>File:</strong> {codeAnalysis.fileName}</p>
+                    <p><strong>Language:</strong> {codeAnalysis.language}</p>
+                    <p><strong>Total lines:</strong> {codeAnalysis.totalLines}</p>
+                    <p><strong>Characters:</strong> {codeAnalysis.totalCharacters}</p>
+                    <p><strong>Empty lines:</strong> {codeAnalysis.emptyLines}</p>
 
+                    <pre
+                      style={{
+                        whiteSpace: "pre-wrap",
+                        overflowWrap: "anywhere",
+                        lineHeight: "1.7",
+                        fontSize: "14px",
+                      }}
+                    >
+                      {codeAnalysis.result}
+                    </pre>
 
-
-
-
-{selectedCodebase && (
-  <section className="projects-section">
-    <div className="projects-heading">
-      <div>
-        <div className="section-overline">
-          <span>SOURCE EXPLORER</span>
-        </div>
-
-        <h2>
-          {selectedCodebase.name} <span>files.</span>
-        </h2>
-      </div>
-
-      <button
-        className="neon-button small-neon-button"
-        onClick={() => setSelectedCodebase(null)}
-      >
-        Close
-      </button>
-    </div>
-
-    {sourceFilesLoading ? (
-      <p>Loading source files...</p>
-    ) : sourceFiles.length > 0 ? (
-      <div className="project-grid">
-       
-{sourceFiles.map((file) => (
-  <article
-    className="project-card project-cyan"
-    key={file._id}
-    onClick={() => handleViewSourceFile(selectedCodebase, file)}
-    style={{ cursor: "pointer" }}
-  >
-    <div className="project-symbol">
-      <Code2 size={23} />
-    </div>
-
-    <h3>{file.path}</h3>
-
-    <p className="project-description">
-      {file.extension || "Source file"}
-    </p>
-
-    <span>Click to view source code →</span>
-  </article>
-))}
-
-        
-      </div>
-    ) : (
-      <p>No source files found.</p>
-    )}
-  </section>
-)}
-
-
-{selectedSourceFile && (
-  <div className="project-card project-cyan" style={{ marginTop: "24px" }}>
-    <div className="projects-heading">
-      <div>
-        <div className="section-overline">
-          <span>SOURCE CODE</span>
-        </div>
-        <h2>{selectedSourceFile.path}</h2>
-      </div>
-
-      <button
-        className="neon-button small-neon-button"
-        onClick={() => setSelectedSourceFile(null)}
-      >
-        Close
-      </button>
-    </div>
-
-
-
-    <button
-  className="neon-button"
-  onClick={handleAnalyzeCode}
-  disabled={analysisLoading}
->
-  {analysisLoading ? "Analyzing..." : "Analyze Code"}
-</button>
-
-
-{sourceContentLoading ? (
-
-  <p>Loading source code...</p>
-) : (
-  <pre
-    style={{
-      overflowX: "auto",
-      maxHeight: "500px",
-      overflowY: "auto",
-      padding: "16px",
-      borderRadius: "8px",
-      background: "#101820",
-      color: "#dfff00",
-      whiteSpace: "pre",
-      fontSize: "13px",
-      lineHeight: "1.6",
-    }}
-  >
-    <code>{selectedSourceFile.content}</code>
-  </pre>
-)}
-
-{codeAnalysis && (
-
-  <div
-    className="project-card project-cyan"
-    style={{ marginTop: "20px", padding: "20px" }}
-  >
-    <h3>🤖 Devora AI Analysis</h3>
-
-<p>
-  <strong>File:</strong> {codeAnalysis.fileName}
-</p>
-
-<p>
-  <strong>Language:</strong> {codeAnalysis.language}
-</p>
-
-<pre
-  style={{
-    whiteSpace: "pre-wrap",
-    overflowWrap: "anywhere",
-    lineHeight: "1.7",
-    fontSize: "14px",
-  }}
->
-  {codeAnalysis.result}
-</pre>
-
-  </div>
-)}
-
-
-
-  </div>
-)}
-
-{codeAnalysis && (
-  <div style={{ marginTop: "20px" }}>
-    <h3>Analysis Results</h3>
-
-    <p><strong>File:</strong> {codeAnalysis.fileName}</p>
-    <p><strong>Language:</strong> {codeAnalysis.language}</p>
-    <p><strong>Total lines:</strong> {codeAnalysis.totalLines}</p>
-    <p><strong>Characters:</strong> {codeAnalysis.totalCharacters}</p>
-    <p><strong>Empty lines:</strong> {codeAnalysis.emptyLines}</p>
-
-    <p>{codeAnalysis.note}</p>
-  </div>
-)}
-
-
-
-
-
-
-
+                    <p>{codeAnalysis.note}</p>
+                  </div>
+                )}
+              </section>
+            )}
 
             <section className="bottom-banner">
               <div className="bottom-banner-icon">
                 <Bot size={25} />
               </div>
+
               <div>
                 <span>MEET YOUR DEVELOPMENT COMPANION</span>
                 <h3>Have an idea? Let's make it happen.</h3>
                 <p>Explore the possibilities with your AI workspace.</p>
               </div>
+
               <button onClick={() => setActivePage("AI Assistant")}>
                 Discover Devora AI <ArrowUpRight size={17} />
               </button>
@@ -975,9 +1067,7 @@ const handleCreateProject = async (event) => {
               <div className="section-overline">
                 <span>PROJECT DIRECTORY</span>
               </div>
-              <h1>
-                Your work. <span>Your world.</span>
-              </h1>
+              <h1>Your work. <span>Your world.</span></h1>
               <p>Manage your development projects in one place.</p>
             </div>
 
@@ -990,6 +1080,7 @@ const handleCreateProject = async (event) => {
                   placeholder="Search projects..."
                 />
               </label>
+
               <button
                 className="neon-button"
                 onClick={() => setShowCreate(true)}
@@ -998,322 +1089,289 @@ const handleCreateProject = async (event) => {
               </button>
             </div>
 
-            <div className="project-grid">
-              {filteredProjects.map((project) => (
-                <article
-                  className={`project-card project-${project.color}`}
-                  key={project._id || project.id}
+            {renderProjectCards()}
+          </section>
+        )}
+
+        {activePage === "AI Assistant" && (
+          <section className="inner-page">
+            <div className="inner-page-heading">
+              <div className="section-overline">
+                <span>DEVORA INTELLIGENCE</span>
+              </div>
+              <h1>Ask your <span>codebase.</span></h1>
+              <p>
+                Ask questions about your uploaded source code and find
+                relevant files.
+              </p>
+            </div>
+
+            <div className="settings-card">
+              <div className="settings-card-icon">
+                <Code2 size={23} />
+              </div>
+
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h3>Select a codebase</h3>
+                <p>Choose the uploaded project you want Devora to investigate.</p>
+
+                <select
+                  className="form-input"
+                  value={selectedCodebase?._id || ""}
+                  onChange={(event) => {
+                    const codebase = codebases.find(
+                      (item) => item._id === event.target.value
+                    );
+
+                    setSelectedCodebase(codebase || null);
+                    setSelectedSourceFile(null);
+                    setCodeAnalysis(null);
+                    setChatMessages([]);
+                  }}
                 >
-                  <div className="project-card-top">
-                    <div className="project-symbol">
-                      <Code2 size={23} />
-                    </div>
-                    <span
-                      className={`project-status status-${project.status
-                        .toLowerCase()
-                        .replace(" ", "-")}`}
-                    >
-                      <span />
-                      {project.status}
-                    </span>
-                  </div>
-                  <h3>{project.name}</h3>
-                  <p className="project-description">{project.description}</p>
-                  <div className="technology-list">
-                    {project.technologies.map((technology) => (
-                      <span key={technology}>{technology}</span>
-                    ))}
-                  </div>
-                  <div className="project-card-footer">
-                    <span>
-  PROJECT / {String(project._id || project.id).slice(-3).toUpperCase()}
-</span>
-                    <button
-                      onClick={() => {
-                        setNotification(`${project.name} selected.`);
-                        window.setTimeout(() => setNotification(""), 3000);
+                  <option value="">Choose an uploaded project</option>
+                  {codebases.map((codebase) => (
+                    <option key={codebase._id} value={codebase._id}>
+                      {codebase.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div
+              className="settings-card"
+              style={{ display: "block", marginTop: "24px" }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "12px",
+                  marginBottom: "20px",
+                }}
+              >
+                <Bot size={25} />
+                <div>
+                  <h3>Project Chat</h3>
+                  <p>Ask a question about your selected codebase.</p>
+                </div>
+              </div>
+
+              <div
+                aria-live="polite"
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "16px",
+                  marginBottom: "20px",
+                }}
+              >
+                {chatMessages.length === 0 && (
+                  <p>
+                    {selectedCodebase
+                      ? "Try asking: Where is the HTML page structure defined?"
+                      : "Select a codebase above to start chatting."}
+                  </p>
+                )}
+
+                {chatMessages.map((message, index) => (
+                  <div
+                    key={`${index}-${message.role}`}
+                    style={{
+                      padding: "16px",
+                      borderRadius: "10px",
+                      background:
+                        message.role === "user" ? "#202b32" : "#111a20",
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    <strong>
+                      {message.role === "user" ? "You" : "Devora AI"}
+                    </strong>
+
+                    <p
+                      style={{
+                        whiteSpace: "pre-wrap",
+                        lineHeight: "1.7",
+                        marginTop: "8px",
+                        fontSize: "16px",
                       }}
-                      aria-label={`View ${project.name}`}
                     >
-                      <ArrowUpRight size={18} />
-                    </button>
+                      {message.content}
+                    </p>
+
+                    {message.matches?.length > 0 && (
+                      <div style={{ marginTop: "20px" }}>
+                        <h3
+                          style={{
+                            fontSize: "20px",
+                            marginBottom: "12px",
+                            color: "#dfe7ef",
+                          }}
+                        >
+                          Relevant Code
+                        </h3>
+
+                        {message.matches.slice(0, 3).map((match, matchIndex) => (
+                          <div
+                            key={`${match.fileName}-${match.lineNumber}-${matchIndex}`}
+                            onClick={() => handleOpenRelevantCode(match)}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(event) => {
+                              if (
+                                event.key === "Enter" ||
+                                event.key === " "
+                              ) {
+                                event.preventDefault();
+                                handleOpenRelevantCode(match);
+                              }
+                            }}
+                            style={{
+                              marginTop: "12px",
+                              border: "1px solid #303d49",
+                              borderRadius: "10px",
+                              overflow: "hidden",
+                              background: "#111922",
+                              cursor: "pointer",
+                            }}
+                          >
+                            <div
+                              style={{
+                                padding: "14px 16px",
+                                background: "#1b2733",
+                                borderBottom: "1px solid #303d49",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  fontSize: "14px",
+                                  color: "#aebdca",
+                                  marginBottom: "6px",
+                                }}
+                              >
+                                FILE
+                              </div>
+
+                              <div
+                                style={{
+                                  fontSize: "16px",
+                                  fontWeight: "600",
+                                  color: "#f1f5f9",
+                                  overflowWrap: "anywhere",
+                                }}
+                              >
+                                📄 {match.fileName}
+                              </div>
+
+                              <div
+                                style={{
+                                  display: "inline-block",
+                                  marginTop: "9px",
+                                  padding: "6px 10px",
+                                  borderRadius: "5px",
+                                  background: "#263b30",
+                                  color: "#9be7b0",
+                                  fontSize: "14px",
+                                  fontWeight: "600",
+                                }}
+                              >
+                                Line {match.lineNumber}
+                              </div>
+                            </div>
+
+                            <div style={{ padding: "14px 16px" }}>
+                              <div
+                                style={{
+                                  fontSize: "13px",
+                                  fontWeight: "700",
+                                  color: "#9baabb",
+                                  marginBottom: "10px",
+                                }}
+                              >
+                                CODE PREVIEW
+                              </div>
+
+                              <pre
+                                style={{
+                                  margin: 0,
+                                  padding: "14px",
+                                  borderRadius: "7px",
+                                  background: "#080d12",
+                                  color: "#d5e6f7",
+                                  fontSize: "15px",
+                                  lineHeight: "1.8",
+                                  fontFamily:
+                                    "'Consolas', 'Courier New', monospace",
+                                  whiteSpace: "pre-wrap",
+                                  overflowWrap: "anywhere",
+                                  overflowX: "auto",
+                                }}
+                              >
+                                {match.code?.trim() || "(Empty line)"}
+                              </pre>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                </article>
-              ))}
+                ))}
+
+                {chatLoading && (
+                  <p role="status">Devora is examining your code...</p>
+                )}
+              </div>
+
+              <form
+                onSubmit={handleSendChat}
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: "12px",
+                }}
+              >
+                <input
+                  className="form-input"
+                  style={{ flex: "1 1 240px", minWidth: 0 }}
+                  value={chatQuestion}
+                  onChange={(event) => setChatQuestion(event.target.value)}
+                  placeholder="Ask about your code..."
+                  disabled={!selectedCodebase || chatLoading}
+                  aria-label="Ask a question about your codebase"
+                />
+
+                <button
+                  type="submit"
+                  className="neon-button"
+                  disabled={
+                    !selectedCodebase ||
+                    !chatQuestion.trim() ||
+                    chatLoading
+                  }
+                >
+                  {chatLoading ? "Thinking..." : "Ask Devora"}
+                </button>
+              </form>
             </div>
           </section>
         )}
 
-{activePage === "AI Assistant" && (
-  <section className="inner-page">
-    <div className="inner-page-heading">
-      <div className="section-overline">
-        <span>DEVORA INTELLIGENCE</span>
-      </div>
-
-      <h1>
-        Ask your <span>codebase.</span>
-      </h1>
-
-      <p>
-        Ask questions about your uploaded source code and find relevant files.
-      </p>
-    </div>
-
-    <div className="settings-card">
-      <div className="settings-card-icon">
-        <Code2 size={23} />
-      </div>
-
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <h3>Select a codebase</h3>
-        <p>Choose the uploaded project you want Devora to investigate.</p>
-
-        <select
-          className="form-input"
-          value={selectedCodebase?._id || ""}
-          onChange={(event) => {
-            const codebase = codebases.find(
-              (item) => item._id === event.target.value
-            );
-
-            setSelectedCodebase(codebase || null);
-            setSelectedSourceFile(null);
-            setChatMessages([]);
-          }}
-        >
-          <option value="">Choose an uploaded project</option>
-
-          {codebases.map((codebase) => (
-            <option key={codebase._id} value={codebase._id}>
-              {codebase.name}
-            </option>
-          ))}
-        </select>
-      </div>
-    </div>
-
-    <div
-      className="settings-card"
-      style={{
-        display: "block",
-        marginTop: "24px",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "12px",
-          marginBottom: "20px",
-        }}
-      >
-        <Bot size={25} />
-        <div>
-          <h3>Project Chat</h3>
-          <p>Ask a question about your selected codebase.</p>
-        </div>
-      </div>
-
-      <div
-        aria-live="polite"
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: "16px",
-          marginBottom: "20px",
-        }}
-      >
-        {chatMessages.length === 0 && (
-          <p>
-            {selectedCodebase
-              ? "Try asking: Where is the HTML page structure defined?"
-              : "Select a codebase above to start chatting."}
-          </p>
-        )}
-
-
-{chatMessages.map((message, index) => (
-  <div
-    key={`${index}-${message.role}`}
-    style={{
-      padding: "16px",
-      borderRadius: "10px",
-      background: message.role === "user" ? "#202b32" : "#111a20",
-      overflowWrap: "anywhere",
-    }}
-  >
-    <strong>
-      {message.role === "user" ? "You" : "Devora AI"}
-    </strong>
-
-    <p
-      style={{
-        whiteSpace: "pre-wrap",
-        lineHeight: "1.7",
-        marginTop: "8px",
-        fontSize: "16px",
-      }}
-    >
-      {message.content}
-    </p>
-
-    {message.matches?.length > 0 && (
-      <div style={{ marginTop: "20px" }}>
-        <h3
-          style={{
-            fontSize: "20px",
-            marginBottom: "12px",
-            color: "#dfe7ef",
-          }}
-        >
-          Relevant Code
-        </h3>
-
-        {message.matches.slice(0, 3).map((match, matchIndex) => (
-          <div
-            key={`${match.fileName}-${match.lineNumber}-${matchIndex}`}
-            style={{
-              marginTop: "12px",
-              border: "1px solid #303d49",
-              borderRadius: "10px",
-              overflow: "hidden",
-              background: "#111922",
-            }}
-          >
-            <div
-              style={{
-                padding: "14px 16px",
-                background: "#1b2733",
-                borderBottom: "1px solid #303d49",
-              }}
-            >
-              <div
-                style={{
-                  fontSize: "14px",
-                  color: "#aebdca",
-                  marginBottom: "6px",
-                }}
-              >
-                FILE
-              </div>
-
-              <div
-                style={{
-                  fontSize: "16px",
-                  fontWeight: "600",
-                  color: "#f1f5f9",
-                  overflowWrap: "anywhere",
-                }}
-              >
-                📄 {match.fileName}
-              </div>
-
-              <div
-                style={{
-                  display: "inline-block",
-                  marginTop: "9px",
-                  padding: "6px 10px",
-                  borderRadius: "5px",
-                  background: "#263b30",
-                  color: "#9be7b0",
-                  fontSize: "14px",
-                  fontWeight: "600",
-                }}
-              >
-                Line {match.lineNumber}
-              </div>
-            </div>
-
-            <div style={{ padding: "14px 16px" }}>
-              <div
-                style={{
-                  fontSize: "13px",
-                  fontWeight: "700",
-                  color: "#9baabb",
-                  marginBottom: "10px",
-                }}
-              >
-                CODE PREVIEW
-              </div>
-
-              <pre
-                style={{
-                  margin: 0,
-                  padding: "14px",
-                  borderRadius: "7px",
-                  background: "#080d12",
-                  color: "#d5e6f7",
-                  fontSize: "15px",
-                  lineHeight: "1.8",
-                  fontFamily: "'Consolas', 'Courier New', monospace",
-                  whiteSpace: "pre-wrap",
-                  overflowWrap: "anywhere",
-                  overflowX: "auto",
-                }}
-              >
-                {match.code?.trim() || "(Empty line)"}
-              </pre>
-            </div>
-          </div>
-        ))}
-      </div>
-    )}
-  </div>
-))}
-
-  
-        {chatLoading && (
-          <p role="status">Devora is examining your code...</p>
-        )}
-      </div>
-
-      <form
-        onSubmit={handleSendChat}
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: "12px",
-        }}
-      >
-        <input
-          className="form-input"
-          style={{ flex: "1 1 240px", minWidth: 0 }}
-          value={chatQuestion}
-          onChange={(event) => setChatQuestion(event.target.value)}
-          placeholder="Ask about your code..."
-          disabled={!selectedCodebase || chatLoading}
-          aria-label="Ask a question about your codebase"
-        />
-
-        <button
-          type="submit"
-          className="neon-button"
-          disabled={
-            !selectedCodebase || !chatQuestion.trim() || chatLoading
-          }
-        >
-          {chatLoading ? "Thinking..." : "Ask Devora"}
-        </button>
-      </form>
-    </div>
-  </section>
-)}
-.......................................
         {activePage === "Settings" && (
           <section className="inner-page settings-page">
             <div className="section-overline">
               <span>WORKSPACE PREFERENCES</span>
             </div>
-            <h1>
-              Workspace <span>settings.</span>
-            </h1>
+
+            <h1>Workspace <span>settings.</span></h1>
             <p>Manage your Devora AI workspace preferences.</p>
 
             <div className="settings-card">
               <div className="settings-card-icon">
                 <Settings size={23} />
               </div>
+
               <div>
                 <h3>Personal workspace</h3>
                 <p>Manage your current development workspace.</p>
@@ -1325,6 +1383,7 @@ const handleCreateProject = async (event) => {
               <div className="settings-card-icon cyan-icon">
                 <Activity size={23} />
               </div>
+
               <div>
                 <h3>System status</h3>
                 <p>Frontend interface is running.</p>
@@ -1335,13 +1394,14 @@ const handleCreateProject = async (event) => {
             </div>
 
             <div className="feature-note">
-              Account details and preferences will be connected to your backend
-              in a later integration step.
+              Account details and preferences will be connected to your
+              backend in a later integration step.
             </div>
           </section>
         )}
 
-        {(activePage === "Terminal" || activePage === "System Status") && (
+        {(activePage === "Terminal" ||
+          activePage === "System Status") && (
           <section className="feature-page">
             <div className="feature-orb">
               <div className="feature-orb-ring">
@@ -1352,25 +1412,25 @@ const handleCreateProject = async (event) => {
                 )}
               </div>
             </div>
+
             <div className="section-overline">
               <span>DEVELOPER TOOLS</span>
             </div>
+
             <h1>
               {activePage === "Terminal" ? (
-                <>
-                  Your command <span>center.</span>
-                </>
+                <>Your command <span>center.</span></>
               ) : (
-                <>
-                  Everything is <span>in sync.</span>
-                </>
+                <>Everything is <span>in sync.</span></>
               )}
             </h1>
+
             <p className="feature-description">
               {activePage === "Terminal"
                 ? "A dedicated terminal experience can be integrated here."
                 : "Your Devora AI interface is running and ready for further integration."}
             </p>
+
             <div className="feature-status">
               <span className="status-pulse" />
               INTERFACE OPERATIONAL
@@ -1380,11 +1440,16 @@ const handleCreateProject = async (event) => {
 
         <footer className="app-footer">
           <div>
-            <span className="footer-brand">DEVORA<span>AI</span></span>
+            <span className="footer-brand">
+              DEVORA<span>AI</span>
+            </span>
             <span>© 2026 Devora Intelligence</span>
           </div>
+
           <div className="footer-right">
-            <span><span className="status-pulse" /> ALL SYSTEMS NORMAL</span>
+            <span>
+              <span className="status-pulse" /> ALL SYSTEMS NORMAL
+            </span>
             <span>DESIGNED TO BUILD WHAT'S NEXT.</span>
           </div>
         </footer>
@@ -1412,9 +1477,11 @@ const handleCreateProject = async (event) => {
             <div className="modal-icon">
               <Plus size={24} />
             </div>
+
             <div className="section-overline">
               <span>NEW WORKSPACE ITEM</span>
             </div>
+
             <h2>Create a project<span>.</span></h2>
             <p className="modal-description">
               Give your next idea a name and a place to grow.
@@ -1423,6 +1490,7 @@ const handleCreateProject = async (event) => {
             <label className="form-label" htmlFor="project-name">
               Project name
             </label>
+
             <input
               id="project-name"
               className="form-input"
@@ -1437,6 +1505,7 @@ const handleCreateProject = async (event) => {
             <label className="form-label" htmlFor="project-description">
               Description <span>OPTIONAL</span>
             </label>
+
             <textarea
               id="project-description"
               className="form-input form-textarea"
@@ -1447,11 +1516,15 @@ const handleCreateProject = async (event) => {
               maxLength={300}
             />
 
-            <button type="submit" className="neon-button modal-submit">
+            <button
+              type="submit"
+              className="neon-button modal-submit"
+            >
               <Plus size={18} /> Create project
             </button>
+
             <p className="modal-disclaimer">
-              PREVIEW ONLY · NOT YET SAVED TO YOUR DATABASE
+              SAVED TO YOUR DATABASE WHEN THE API REQUEST SUCCEEDS
             </p>
           </form>
         </div>
@@ -1461,4 +1534,3 @@ const handleCreateProject = async (event) => {
 }
 
 export default App;
-
