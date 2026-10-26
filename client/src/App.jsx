@@ -3,6 +3,7 @@ import Login from "./Login";
 import { useEffect, useState } from "react";
 import {
   Activity,
+  Pencil,
   ArrowUpRight,
   Bell,
   Bot,
@@ -87,6 +88,7 @@ function App() {
   const [showCreate, setShowCreate] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
+  const [editingProject, setEditingProject] = useState(null);
   const [cursor, setCursor] = useState({ x: -100, y: -100 });
   const [mobileMenu, setMobileMenu] = useState(false);
   const [notification, setNotification] = useState("");
@@ -451,6 +453,48 @@ setCodeAnalysis({
     }
   };
 
+
+
+const handleUpdateProject = async (event) => {
+  event.preventDefault();
+
+  if (!editingProject || !projectName.trim()) return;
+
+  try {
+    const data = await apiRequest(
+      `/api/projects/${editingProject._id}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          name: projectName.trim(),
+          description: projectDescription.trim(),
+        }),
+      }
+    );
+
+    const updatedProject = data.project || data;
+
+    setProjects((previous) =>
+      previous.map((project) =>
+        project._id === editingProject._id
+          ? { ...project, ...updatedProject }
+          : project
+      )
+    );
+
+    setEditingProject(null);
+    setProjectName("");
+    setProjectDescription("");
+    setNotification("Project updated successfully!");
+  } catch (error) {
+    setNotification(error.message || "Failed to update project.");
+  }
+};
+
+
+
+
+
   const handleMenuClick = (label) => {
     setActivePage(label);
     setMobileMenu(false);
@@ -510,13 +554,16 @@ setCodeAnalysis({
               </span>
 
               <button
-                aria-label={`View ${project.name}`}
-                onClick={() =>
-                  setNotification(`${project.name} selected.`)
-                }
-              >
-                <ArrowUpRight size={18} />
-              </button>
+  aria-label={`Edit ${project.name}`}
+  onClick={() => {
+    setEditingProject(project);
+    setProjectName(project.name || "");
+    setProjectDescription(project.description || "");
+    setShowCreate(true);
+  }}
+>
+  <Pencil size={18} />
+</button>
             </div>
           </article>
         ))}
@@ -1519,8 +1566,10 @@ setCodeAnalysis({
             }
           }}
         >
-          <form className="create-modal" onSubmit={handleCreateProject}>
-            <button
+<form
+  className="create-modal"
+  onSubmit={editingProject ? handleUpdateProject : handleCreateProject}
+>            <button
               type="button"
               className="modal-close icon-button"
               onClick={() => setShowCreate(false)}
@@ -1537,7 +1586,10 @@ setCodeAnalysis({
               <span>NEW WORKSPACE ITEM</span>
             </div>
 
-            <h2>Create a project<span>.</span></h2>
+            <h2>
+  {editingProject ? "Edit project" : "Create a project"}
+  <span>.</span>
+</h2>
             <p className="modal-description">
               Give your next idea a name and a place to grow.
             </p>
@@ -1575,8 +1627,9 @@ setCodeAnalysis({
               type="submit"
               className="neon-button modal-submit"
             >
-              <Plus size={18} /> Create project
-            </button>
+{editingProject ? <Pencil size={18} /> : <Plus size={18} />}
+{editingProject ? "Save changes" : "Create project"}          
+  </button>
 
             <p className="modal-disclaimer">
               SAVED TO YOUR DATABASE WHEN THE API REQUEST SUCCEEDS
