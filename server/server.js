@@ -13,7 +13,7 @@ const User = require("./models/User");
 const projectRoutes = require("./routes/projectRoutes");
 const codebaseRoutes = require("./routes/codebaseRoutes");
 const analysisRoutes = require("./routes/analysisRoutes");
-
+const projectChatRoutes = require("./routes/projectChatRoutes");
 
 const app = express();
 
@@ -25,6 +25,7 @@ app.use("/api/auth", authRoutes)
 app.use("/api/projects", projectRoutes);
 app.use("/api/codebase", codebaseRoutes);
 app.use("/api/analysis", analysisRoutes);
+app.use("/api/project-chat", projectChatRoutes);
 
 
 
