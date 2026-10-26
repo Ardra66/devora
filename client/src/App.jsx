@@ -610,6 +610,73 @@ const handleCreateProject = async (event) => {
               )}
             </section>
 
+
+<section className="projects-section">
+  <div className="projects-heading">
+    <div>
+      <div className="section-overline">
+        <span>CODEBASE DIRECTORY</span>
+      </div>
+      <h2>
+        Uploaded <span>codebases.</span>
+      </h2>
+      <p>Your uploaded source code, ready to explore.</p>
+    </div>
+  </div>
+
+  {codebasesLoading ? (
+    <p>Loading codebases...</p>
+  ) : codebasesError ? (
+    <p>{codebasesError}</p>
+  ) : codebases.length === 0 ? (
+    <p>No codebases uploaded yet.</p>
+  ) : (
+    <div className="project-grid">
+      {codebases.map((codebase) => (
+        <article
+          className="project-card project-cyan"
+          key={codebase._id}
+        >
+          <div className="project-card-top">
+            <div className="project-symbol">
+              <Code2 size={23} />
+            </div>
+            <span className="project-status">
+              <span />
+              {codebase.status}
+            </span>
+          </div>
+
+          <h3>{codebase.name}</h3>
+
+          <p className="project-description">
+            {codebase.originalFileName}
+          </p>
+
+          <div className="technology-list">
+            <span>{codebase.fileCount} files</span>
+          </div>
+
+          <div className="project-card-footer">
+            <span>UPLOADED CODEBASE</span>
+          </div>
+        </article>
+      ))}
+    </div>
+  )}
+</section>
+
+
+
+
+
+
+
+
+
+
+
+
             <section className="bottom-banner">
               <div className="bottom-banner-icon">
                 <Bot size={25} />
@@ -682,7 +749,9 @@ const handleCreateProject = async (event) => {
                     ))}
                   </div>
                   <div className="project-card-footer">
-                    <span>PROJECT / {String(project.id).padStart(3, "0")}</span>
+                    <span>
+  PROJECT / {String(project._id || project.id).slice(-3).toUpperCase()}
+</span>
                     <button
                       onClick={() => {
                         setNotification(`${project.name} selected.`);
