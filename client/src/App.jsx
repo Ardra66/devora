@@ -64,7 +64,10 @@ function App() {
   const [selectedCodebase, setSelectedCodebase] = useState(null);
 const [sourceFiles, setSourceFiles] = useState([]);
 const [codeAnalysis, setCodeAnalysis] = useState(null);
-const [analysisLoading, setAnalysisLoading] = useState(false);
+
+const [chatQuestion, setChatQuestion] = useState("");
+const [chatMessages, setChatMessages] = useState([]);
+const [chatLoading, setChatLoading] = useState(false);
 
 const [sourceFilesLoading, setSourceFilesLoading] = useState(false);
 const [selectedSourceFile, setSelectedSourceFile] = useState(null);
@@ -203,11 +206,55 @@ setCodeAnalysis(data.analysis);;
   }
 };
 
+const handleSendChat = async (event) => {
+  event.preventDefault();
 
+  if (!selectedCodebase) {
+    setNotification("Please select an uploaded codebase first.");
+    return;
+  }
 
+  if (!chatQuestion.trim() || chatLoading) return;
 
+  const question = chatQuestion.trim();
 
+  setChatMessages((previous) => [
+    ...previous,
+    { role: "user", content: question },
+  ]);
 
+  setChatQuestion("");
+  setChatLoading(true);
+
+  try {
+    const data = await apiRequest(
+      `/api/project-chat/${selectedCodebase._id}`,
+      {
+        method: "POST",
+        body: JSON.stringify({ question }),
+      }
+    );
+
+    setChatMessages((previous) => [
+      ...previous,
+      {
+        role: "assistant",
+        content: data.answer || "No answer was returned.",
+        matches: data.matches || [],
+      },
+    ]);
+  } catch (error) {
+    setChatMessages((previous) => [
+      ...previous,
+      {
+        role: "assistant",
+        content: error.message || "Failed to get an answer.",
+      },
+    ]);
+  } finally {
+    setChatLoading(false);
+  }
+};
 
 const handleCreateProject = async (event) => {
   event.preventDefault();
@@ -996,38 +1043,191 @@ const handleCreateProject = async (event) => {
             </div>
           </section>
         )}
+{activePage === "AI Assistant" && (
+  <section className="inner-page">
+    <div className="inner-page-heading">
+      <div className="section-overline">
+        <span>DEVORA INTELLIGENCE</span>
+      </div>
 
-        {activePage === "AI Assistant" && (
-          <section className="feature-page">
-            <div className="feature-orb">
-              <div className="feature-orb-ring">
-                <Bot size={60} />
-              </div>
-              <Sparkles className="feature-sparkle" size={27} />
-            </div>
-            <div className="section-overline">
-              <span>DEVORA INTELLIGENCE</span>
-            </div>
-            <h1>
-              Meet your <span>AI companion.</span>
-            </h1>
-            <p className="feature-description">
-              A smarter development workspace starts with the right tools.
-              Your AI assistant interface is ready for its next integration.
-            </p>
-            <div className="feature-status">
-              <span className="status-pulse" />
-              AI WORKSPACE INTERFACE READY
-            </div>
-            <div className="feature-note">
-              <CircleHelp size={18} />
-              <span>
-                AI responses require a configured AI provider and backend
-                integration. This screen is currently a frontend preview.
-              </span>
-            </div>
-          </section>
+      <h1>
+        Ask your <span>codebase.</span>
+      </h1>
+
+      <p>
+        Ask questions about your uploaded source code and find relevant files.
+      </p>
+    </div>
+
+    <div className="settings-card">
+      <div className="settings-card-icon">
+        <Code2 size={23} />
+      </div>
+
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <h3>Select a codebase</h3>
+        <p>Choose the uploaded project you want Devora to investigate.</p>
+
+        <select
+          className="form-input"
+          value={selectedCodebase?._id || ""}
+          onChange={(event) => {
+            const codebase = codebases.find(
+              (item) => item._id === event.target.value
+            );
+
+            setSelectedCodebase(codebase || null);
+            setSelectedSourceFile(null);
+            setChatMessages([]);
+          }}
+        >
+          <option value="">Choose an uploaded project</option>
+
+          {codebases.map((codebase) => (
+            <option key={codebase._id} value={codebase._id}>
+              {codebase.name}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
+
+    <div
+      className="settings-card"
+      style={{
+        display: "block",
+        marginTop: "24px",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "12px",
+          marginBottom: "20px",
+        }}
+      >
+        <Bot size={25} />
+        <div>
+          <h3>Project Chat</h3>
+          <p>Ask a question about your selected codebase.</p>
+        </div>
+      </div>
+
+      <div
+        aria-live="polite"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "16px",
+          marginBottom: "20px",
+        }}
+      >
+        {chatMessages.length === 0 && (
+          <p>
+            {selectedCodebase
+              ? "Try asking: Where is the HTML page structure defined?"
+              : "Select a codebase above to start chatting."}
+          </p>
         )}
+
+        {chatMessages.map((message, index) => (
+          <div
+            key={`${index}-${message.role}`}
+            style={{
+              padding: "16px",
+              borderRadius: "10px",
+              background:
+                message.role === "user" ? "#202b32" : "#111a20",
+              overflowWrap: "anywhere",
+            }}
+          >
+            <strong>
+              {message.role === "user" ? "You" : "Devora AI"}
+            </strong>
+
+            <p
+              style={{
+                whiteSpace: "pre-wrap",
+                lineHeight: "1.7",
+                marginTop: "8px",
+              }}
+            >
+              {message.content}
+            </p>
+
+            {message.matches?.length > 0 && (
+              <div style={{ marginTop: "12px" }}>
+                <strong>Candidate code locations</strong>
+
+                {message.matches.map((match, matchIndex) => (
+                  <div
+                    key={`${match.fileName}-${match.lineNumber}-${matchIndex}`}
+                    style={{
+                      marginTop: "8px",
+                      padding: "10px",
+                      borderRadius: "6px",
+                      background: "#0b1116",
+                    }}
+                  >
+                    <p>
+                      <strong>File:</strong> {match.fileName}
+                    </p>
+                    <p>
+                      <strong>Line:</strong> {match.lineNumber}
+                    </p>
+                    <pre
+                      style={{
+                        whiteSpace: "pre-wrap",
+                        overflowWrap: "anywhere",
+                        marginTop: "8px",
+                      }}
+                    >
+                      {match.code}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+
+        {chatLoading && (
+          <p role="status">Devora is examining your code...</p>
+        )}
+      </div>
+
+      <form
+        onSubmit={handleSendChat}
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "12px",
+        }}
+      >
+        <input
+          className="form-input"
+          style={{ flex: "1 1 240px", minWidth: 0 }}
+          value={chatQuestion}
+          onChange={(event) => setChatQuestion(event.target.value)}
+          placeholder="Ask about your code..."
+          disabled={!selectedCodebase || chatLoading}
+          aria-label="Ask a question about your codebase"
+        />
+
+        <button
+          type="submit"
+          className="neon-button"
+          disabled={
+            !selectedCodebase || !chatQuestion.trim() || chatLoading
+          }
+        >
+          {chatLoading ? "Thinking..." : "Ask Devora"}
+        </button>
+      </form>
+    </div>
+  </section>
+)}
 
         {activePage === "Settings" && (
           <section className="inner-page settings-page">
