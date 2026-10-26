@@ -63,6 +63,8 @@ const initialProjects = [
 function App() {
   const [selectedCodebase, setSelectedCodebase] = useState(null);
 const [sourceFiles, setSourceFiles] = useState([]);
+const [codeAnalysis, setCodeAnalysis] = useState(null);
+const [analysisLoading, setAnalysisLoading] = useState(false);
 
 const [sourceFilesLoading, setSourceFilesLoading] = useState(false);
 const [selectedSourceFile, setSelectedSourceFile] = useState(null);
@@ -178,6 +180,26 @@ const handleViewSourceFile = async (codebase, file) => {
     setNotification(error.message || "Failed to load source code.");
   } finally {
     setSourceContentLoading(false);
+  }
+};
+
+const handleAnalyzeCode = async () => {
+  if (!selectedCodebase || !selectedSourceFile) return;
+
+  setAnalysisLoading(true);
+  setCodeAnalysis(null);
+
+  try {
+    const data = await apiRequest(
+      `/api/analysis/${selectedCodebase._id}/${selectedSourceFile._id}`,
+      { method: "POST" }
+    );
+console.log("Gemini API response:", data);
+setCodeAnalysis(data.analysis);;
+  } catch (error) {
+    setNotification(error.message || "Code analysis failed.");
+  } finally {
+    setAnalysisLoading(false);
   }
 };
 
@@ -795,30 +817,87 @@ const handleCreateProject = async (event) => {
       </button>
     </div>
 
-    {sourceContentLoading ? (
-      <p>Loading source code...</p>
-    ) : (
-      <pre
-        style={{
-          overflowX: "auto",
-          maxHeight: "500px",
-          overflowY: "auto",
-          padding: "16px",
-          borderRadius: "8px",
-          background: "#101820",
-          color: "#dfff00",
-          whiteSpace: "pre",
-          fontSize: "13px",
-          lineHeight: "1.6",
-        }}
-      >
-        <code>{selectedSourceFile.content}</code>
-      </pre>
-    )}
+
+
+    <button
+  className="neon-button"
+  onClick={handleAnalyzeCode}
+  disabled={analysisLoading}
+>
+  {analysisLoading ? "Analyzing..." : "Analyze Code"}
+</button>
+
+
+{sourceContentLoading ? (
+
+  <p>Loading source code...</p>
+) : (
+  <pre
+    style={{
+      overflowX: "auto",
+      maxHeight: "500px",
+      overflowY: "auto",
+      padding: "16px",
+      borderRadius: "8px",
+      background: "#101820",
+      color: "#dfff00",
+      whiteSpace: "pre",
+      fontSize: "13px",
+      lineHeight: "1.6",
+    }}
+  >
+    <code>{selectedSourceFile.content}</code>
+  </pre>
+)}
+
+{codeAnalysis && (
+
+  <div
+    className="project-card project-cyan"
+    style={{ marginTop: "20px", padding: "20px" }}
+  >
+    <h3>🤖 Devora AI Analysis</h3>
+
+<p>
+  <strong>File:</strong> {codeAnalysis.fileName}
+</p>
+
+<p>
+  <strong>Language:</strong> {codeAnalysis.language}
+</p>
+
+<pre
+  style={{
+    whiteSpace: "pre-wrap",
+    overflowWrap: "anywhere",
+    lineHeight: "1.7",
+    fontSize: "14px",
+  }}
+>
+  {codeAnalysis.result}
+</pre>
+
   </div>
 )}
 
 
+
+  </div>
+)}
+
+{codeAnalysis && (
+  <div style={{ marginTop: "20px" }}>
+    <h3>Analysis Results</h3>
+
+    <p><strong>File:</strong> {codeAnalysis.fileName}</p>
+    <p><strong>Language:</strong> {codeAnalysis.language}</p>
+    <p><strong>Total lines:</strong> {codeAnalysis.totalLines}</p>
+    <p><strong>Characters:</strong> {codeAnalysis.totalCharacters}</p>
+    <p><strong>Empty lines:</strong> {codeAnalysis.emptyLines}</p>
+
+    <p>{codeAnalysis.note}</p>
+  </div>
+)}
 
 
 

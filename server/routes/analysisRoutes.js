@@ -4,10 +4,9 @@ const mongoose = require("mongoose");
 const protect = require("../middleware/authMiddleware");
 const Codebase = require("../models/Codebase");
 const SourceFile = require("../models/SourceFile");
-
+const { analyzeCode } = require("../services/geminiService");
 const router = express.Router();
 
-// Analyze a selected source file
 router.post("/:codebaseId/:fileId", protect, async (req, res) => {
   try {
     const { codebaseId, fileId } = req.params;
@@ -43,29 +42,26 @@ router.post("/:codebaseId/:fileId", protect, async (req, res) => {
         message: "Source file not found.",
       });
     }
-
-    // Temporary analysis until an AI model is connected
-    const lines = file.content.split("\n");
+    console.log("Starting Gemini analysis for:", file.path);
+    
+    const analysis = await analyzeCode(file.content, file.path);
+    console.log("Gemini analysis completed:", Boolean(analysis));
 
     return res.status(200).json({
-      message: "Basic code analysis completed.",
+      message: "AI code analysis completed successfully.",
       analysis: {
         fileName: file.path,
         language: file.extension,
-        totalLines: lines.length,
-        totalCharacters: file.content.length,
-        emptyLines: lines.filter((line) => !line.trim()).length,
-        note: "This is basic code analysis, not AI-generated analysis yet.",
+        result: analysis,
       },
     });
   } catch (error) {
-    console.error("Code analysis error:", error);
+    console.error("AI code analysis error:", error);
 
     return res.status(500).json({
-      message: "Failed to analyze source code.",
+      message: "AI code analysis failed. Please try again.",
     });
   }
 });
 
 module.exports = router;
-

@@ -1,15 +1,19 @@
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
+const path = require("path");
+
+// Load environment variables BEFORE importing routes
+dotenv.config({ path: path.join(__dirname, ".env") });
+
 const connectDB = require("./config/db");
-const protect = require ("./middleware/authMiddleware")
+const protect = require("./middleware/authMiddleware");
 const authRoutes = require("./routes/authRoutes");
 const User = require("./models/User");
 const projectRoutes = require("./routes/projectRoutes");
 const codebaseRoutes = require("./routes/codebaseRoutes");
 const analysisRoutes = require("./routes/analysisRoutes");
 
-dotenv.config();
 
 const app = express();
 
