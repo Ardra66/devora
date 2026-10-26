@@ -309,7 +309,6 @@ yauzl.fromBuffer(
 });
 });
 
-// Get all codebases belonging to the logged-in user
 router.get("/", protect, async (req, res) => {
   try {
     const codebases = await Codebase.find({
@@ -330,7 +329,6 @@ router.get("/", protect, async (req, res) => {
   }
 });
 
-// Get source files for a codebase
 router.get("/:id/files", protect, async (req, res) => {
   try {
     const Codebase = require("../models/Codebase");
@@ -369,7 +367,6 @@ router.get("/:id/files", protect, async (req, res) => {
 });
 
 
-// Get the content of a specific source file
 router.get("/:id/files/:fileId", protect, async (req, res) => {
   try {
     const codebase = await Codebase.findOne({

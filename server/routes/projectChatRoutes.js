@@ -16,14 +16,12 @@ router.post("/:codebaseId", protect, async (req, res) => {
     const { question } = req.body;
     const { codebaseId } = req.params;
 
-    // Validate codebase ID.
     if (!mongoose.isValidObjectId(codebaseId)) {
       return res.status(400).json({
         message: "Invalid codebase ID.",
       });
     }
 
-    // Validate question.
     if (typeof question !== "string" || !question.trim()) {
       return res.status(400).json({
         message: "Please enter a question.",
@@ -33,7 +31,6 @@ router.post("/:codebaseId", protect, async (req, res) => {
     const cleanQuestion = question.trim();
     const questionLower = cleanQuestion.toLowerCase();
 
-    // Find the codebase belonging to the logged-in user.
     const codebase = await Codebase.findOne({
       _id: codebaseId,
       owner: req.userId,
@@ -45,7 +42,6 @@ router.post("/:codebaseId", protect, async (req, res) => {
       });
     }
 
-    // Load this codebase's source files.
     const files = await SourceFile.find({
       codebase: codebase._id,
       owner: req.userId,
@@ -59,7 +55,6 @@ router.post("/:codebaseId", protect, async (req, res) => {
       });
     }
 
-    // Identify the question type.
     const isTitleQuestion =
       /\b(title|browser tab|tab title|document title)\b/i.test(
         cleanQuestion
@@ -75,13 +70,10 @@ router.post("/:codebaseId", protect, async (req, res) => {
         cleanQuestion
       );
 
-    // Build the complete project file inventory.
     const fileInventory = files
       .map((file) => file.path)
       .join("\n");
 
-    // For project-structure questions, provide file paths and
-    // representative source content instead of isolated matching lines.
     let context = "";
     let topMatches = [];
 
@@ -104,7 +96,6 @@ router.post("/:codebaseId", protect, async (req, res) => {
         context += fileContext;
         usedChars += fileContext.length;
 
-        // Preserve the existing frontend's relevant-code format.
         const lines = file.content.split(/\r?\n/);
         const maxLinesPerFile = 2;
 
@@ -126,7 +117,6 @@ router.post("/:codebaseId", protect, async (req, res) => {
         }
       }
     } else {
-      // Search individual lines for other questions.
       const searchTerms = new Set(
         questionLower
           .split(/[^a-z0-9_]+/)
@@ -264,7 +254,6 @@ router.post("/:codebaseId", protect, async (req, res) => {
         }
       }
 
-      // Rank the best matching lines.
       matches.sort((a, b) => b.score - a.score);
 
       const seenLocations = new Set();
@@ -294,7 +283,6 @@ router.post("/:codebaseId", protect, async (req, res) => {
         : "No relevant source-code matches were found.";
     }
 
-    // Give Gemini instructions suited to the question.
     const prompt = `
 You are Devora AI, a programming assistant that explains uploaded projects.
 

@@ -38,6 +38,7 @@ owner: {
 {
 timestamps: true,
 }
+
 );
 
 module.exports = mongoose.model("Project", projectSchema);
