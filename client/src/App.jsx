@@ -61,8 +61,12 @@ const initialProjects = [
 ];
 
 function App() {
+  const [selectedCodebase, setSelectedCodebase] = useState(null);
+const [sourceFiles, setSourceFiles] = useState([]);
+const [sourceFilesLoading, setSourceFilesLoading] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(
   Boolean(localStorage.getItem("devoraToken"))
+  
 );
   const [activePage, setActivePage] = useState("Dashboard");
   const [projects, setProjects] = useState(initialProjects);
@@ -136,6 +140,34 @@ const [codebasesError, setCodebasesError] = useState("");
   const completedCount = projects.filter(
     (project) => project.status === "Completed"
   ).length;
+
+
+
+const handleViewCodebase = async (codebase) => {
+  setSelectedCodebase(codebase);
+  setSourceFiles([]);
+  setSourceFilesLoading(true);
+
+  try {
+    const data = await apiRequest(
+      `/api/codebase/${codebase._id}/files`
+    );
+
+    setSourceFiles(data.files || []);
+  } catch (error) {
+    setNotification(error.message || "Failed to load source files.");
+  } finally {
+    setSourceFilesLoading(false);
+  }
+};
+
+
+
+
+
+
+
+
 
 const handleCreateProject = async (event) => {
   event.preventDefault();
@@ -633,10 +665,11 @@ const handleCreateProject = async (event) => {
   ) : (
     <div className="project-grid">
       {codebases.map((codebase) => (
-        <article
-          className="project-card project-cyan"
-          key={codebase._id}
-        >
+        <article className="project-card project-cyan"
+         key={codebase._id} 
+         onClick={() => handleViewCodebase(codebase)}
+          style={{ cursor: "pointer" }} >
+
           <div className="project-card-top">
             <div className="project-symbol">
               <Code2 size={23} />
@@ -670,7 +703,53 @@ const handleCreateProject = async (event) => {
 
 
 
+{selectedCodebase && (
+  <section className="projects-section">
+    <div className="projects-heading">
+      <div>
+        <div className="section-overline">
+          <span>SOURCE EXPLORER</span>
+        </div>
 
+        <h2>
+          {selectedCodebase.name} <span>files.</span>
+        </h2>
+      </div>
+
+      <button
+        className="neon-button small-neon-button"
+        onClick={() => setSelectedCodebase(null)}
+      >
+        Close
+      </button>
+    </div>
+
+    {sourceFilesLoading ? (
+      <p>Loading source files...</p>
+    ) : sourceFiles.length > 0 ? (
+      <div className="project-grid">
+        {sourceFiles.map((file) => (
+          <article
+            className="project-card project-cyan"
+            key={file._id}
+          >
+            <div className="project-symbol">
+              <Code2 size={23} />
+            </div>
+
+            <h3>{file.path}</h3>
+
+            <p className="project-description">
+              {file.extension || "Source file"}
+            </p>
+          </article>
+        ))}
+      </div>
+    ) : (
+      <p>No source files found.</p>
+    )}
+  </section>
+)}
 
 
 

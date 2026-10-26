@@ -339,6 +339,47 @@ router.get("/", protect, async (req, res) => {
 
 
 
+// Get source files for a codebase
+router.get("/:id/files", protect, async (req, res) => {
+  try {
+    const Codebase = require("../models/Codebase");
+    const SourceFile = require("../models/SourceFile");
+
+    const codebase = await Codebase.findOne({
+      _id: req.params.id,
+      owner: req.userId,
+    });
+
+    if (!codebase) {
+      return res.status(404).json({
+        message: "Codebase not found",
+      });
+    }
+
+    const files = await SourceFile.find({
+      codebase: codebase._id,
+      owner: req.userId,
+    })
+      .select("path extension")
+      .sort({ path: 1 });
+
+    res.status(200).json({
+      message: "Source files retrieved successfully",
+      count: files.length,
+      files,
+    });
+  } catch (error) {
+    console.error("Failed to retrieve source files:", error);
+
+    res.status(500).json({
+      message: "Failed to retrieve source files",
+    });
+  }
+});
+
+
+
+
 
 
 module.exports = router;
