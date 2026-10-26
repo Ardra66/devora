@@ -51,50 +51,86 @@ router.post("/:codebaseId", protect, async (req, res) => {
       });
     }
 
-    const questionWords = question
-      .toLowerCase()
-      .split(/[^a-z0-9_]+/)
-      .filter((word) => word.length > 2);
+    const questionLower = question.toLowerCase();
+
+    const searchTerms = new Set(
+      questionLower
+        .split(/[^a-z0-9_]+/)
+        .filter((word) => word.length > 2)
+    );
+
+    // Add related programming terms to improve search results.
+    const relatedTerms = {
+      login: ["auth", "authenticate", "password", "signin", "bcrypt", "token"],
+      authentication: ["auth", "login", "password", "jwt", "token"],
+      validation: ["validate", "required", "schema", "check", "error"],
+      database: ["mongodb", "mongoose", "connect", "connection", "query"],
+      submit: ["onsubmit", "submit", "handleSubmit", "preventDefault"],
+      form: ["input", "submit", "onsubmit", "handleSubmit", "validation"],
+      api: ["router", "route", "endpoint", "fetch", "axios", "request"],
+      structure: ["html", "head", "body", "doctype", "main"],
+      navbar: ["nav", "navigation", "header", "menu"],
+      styling: ["css", "class", "style", "stylesheet"],
+      image: ["img", "src", "alt", "image"],
+    };
+
+    for (const [term, related] of Object.entries(relatedTerms)) {
+      if (searchTerms.has(term)) {
+        related.forEach((word) => searchTerms.add(word));
+      }
+    }
 
     const matches = [];
 
     for (const file of files) {
       const lines = file.content.split(/\r?\n/);
-      let matchedLines = 0;
+      const filePath = file.path.toLowerCase();
 
+      // Give filenames a chance to match the user's question.
+      const pathMatches = [...searchTerms].filter((word) =>
+        filePath.includes(word)
+      );
+
+      // Score each line based on matching terms.
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
+        const lineLower = line.toLowerCase();
 
-        const matchedWords = questionWords.filter((word) =>
-          line.toLowerCase().includes(word)
+        const matchedWords = [...searchTerms].filter((word) =>
+          lineLower.includes(word)
         );
 
-        if (matchedWords.length > 0) {
+        const score =
+          matchedWords.length +
+          (pathMatches.length > 0 ? 2 : 0);
+
+        if (score > 0) {
           matches.push({
             fileName: file.path,
             extension: file.extension,
             lineNumber: i + 1,
             code: line,
             matchedWords,
+            score,
           });
-
-          matchedLines++;
         }
-
-        if (matches.length >= 40) break;
       }
-
-      if (matches.length >= 40) break;
     }
 
-    const context = matches.length
-      ? matches
+    // Rank the strongest matches first.
+    matches.sort((a, b) => b.score - a.score);
+
+    // Keep the response focused.
+    const topMatches = matches.slice(0, 40);
+
+    const context = topMatches.length
+      ? topMatches
           .map(
             (match) =>
               `File: ${match.fileName}\nLine: ${match.lineNumber}\nCode: ${match.code}`
           )
           .join("\n\n")
-      : "No direct keyword matches were found in the uploaded source files.";
+      : "No relevant source-code matches were found.";
 
     const prompt = `
 You are Devora AI, a programming assistant that answers questions
