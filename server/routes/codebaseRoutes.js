@@ -306,13 +306,8 @@ yauzl.fromBuffer(
   }
 );
 
-
 });
 });
-
-
-
-
 
 // Get all codebases belonging to the logged-in user
 router.get("/", protect, async (req, res) => {
@@ -334,10 +329,6 @@ router.get("/", protect, async (req, res) => {
     });
   }
 });
-
-
-
-
 
 // Get source files for a codebase
 router.get("/:id/files", protect, async (req, res) => {
@@ -378,8 +369,49 @@ router.get("/:id/files", protect, async (req, res) => {
 });
 
 
+// Get the content of a specific source file
+router.get("/:id/files/:fileId", protect, async (req, res) => {
+  try {
+    const codebase = await Codebase.findOne({
+      _id: req.params.id,
+      owner: req.userId,
+    });
 
+    if (!codebase) {
+      return res.status(404).json({
+        message: "Codebase not found.",
+      });
+    }
 
+    if (!mongoose.isValidObjectId(req.params.fileId)) {
+      return res.status(400).json({
+        message: "Invalid source file ID.",
+      });
+    }
 
+    const file = await SourceFile.findOne({
+      _id: req.params.fileId,
+      codebase: codebase._id,
+      owner: req.userId,
+    }).select("path extension content");
+
+    if (!file) {
+      return res.status(404).json({
+        message: "Source file not found.",
+      });
+    }
+
+    return res.status(200).json({
+      message: "Source file retrieved successfully.",
+      file,
+    });
+  } catch (error) {
+    console.error("Get source file content error:", error);
+
+    return res.status(500).json({
+      message: "Failed to retrieve source file content.",
+    });
+  }
+});
 
 module.exports = router;
