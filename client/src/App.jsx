@@ -66,6 +66,9 @@ function App() {
 );
   const [activePage, setActivePage] = useState("Dashboard");
   const [projects, setProjects] = useState(initialProjects);
+  const [codebases, setCodebases] = useState([]);
+const [codebasesLoading, setCodebasesLoading] = useState(true);
+const [codebasesError, setCodebasesError] = useState("");
   const [searchText, setSearchText] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [projectName, setProjectName] = useState("");
@@ -74,30 +77,53 @@ function App() {
   const [mobileMenu, setMobileMenu] = useState(false);
   const [notification, setNotification] = useState("");
 
- useEffect(() => {
-const fetchProjects = async () => {
-try {
-const data = await apiRequest("/api/projects");
 
-console.log("API response:", data);
-console.log("Projects received:", data.projects);
+  // Fetch existing projects
+  useEffect(() => {
+    const fetchProjects = async () => {
+      try {
+        const data = await apiRequest("/api/projects");
 
-const fetchedProjects = Array.isArray(data)
-  ? data
-  : data.projects || [];
+        console.log("API response:", data);
+        console.log("Projects received:", data.projects);
 
-setProjects(fetchedProjects);
-} catch (error) {
-  console.error("Failed to fetch projects:", error.message);
-}
+        const fetchedProjects = Array.isArray(data)
+          ? data
+          : data.projects || [];
 
+        setProjects(fetchedProjects);
+      } catch (error) {
+        console.error("Failed to fetch projects:", error.message);
+      }
+    };
 
-};
+    if (localStorage.getItem("devoraToken")) {
+      fetchProjects();
+    }
+  }, []);
 
-if (localStorage.getItem("devoraToken")) {
-fetchProjects();
-}
-}, []);
+  // Fetch uploaded codebases
+  useEffect(() => {
+    const fetchCodebases = async () => {
+      try {
+        const data = await apiRequest("/api/codebase");
+
+        setCodebases(data.codebases || []);
+        setCodebasesError("");
+      } catch (error) {
+        console.error("Failed to fetch codebases:", error.message);
+        setCodebasesError(error.message || "Failed to load codebases.");
+      } finally {
+        setCodebasesLoading(false);
+      }
+    };
+
+    if (localStorage.getItem("devoraToken")) {
+      fetchCodebases();
+    } else {
+      setCodebasesLoading(false);
+    }
+  }, []);
 
   const filteredProjects = projects.filter((project) =>
     project.name.toLowerCase().includes(searchText.toLowerCase())
@@ -524,7 +550,7 @@ const handleCreateProject = async (event) => {
                   {filteredProjects.map((project, index) => (
                     <article
                       className={`project-card project-${project.color}`}
-                      key={project.id}
+                     key={project._id || project.id}
                       style={{ animationDelay: `${index * 100}ms` }}
                     >
                       <div className="project-card-top">
@@ -633,7 +659,7 @@ const handleCreateProject = async (event) => {
               {filteredProjects.map((project) => (
                 <article
                   className={`project-card project-${project.color}`}
-                  key={project.id}
+                  key={project._id || project.id}
                 >
                   <div className="project-card-top">
                     <div className="project-symbol">
