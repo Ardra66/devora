@@ -1043,6 +1043,7 @@ const handleCreateProject = async (event) => {
             </div>
           </section>
         )}
+
 {activePage === "AI Assistant" && (
   <section className="inner-page">
     <div className="inner-page-heading">
@@ -1131,67 +1132,137 @@ const handleCreateProject = async (event) => {
           </p>
         )}
 
-        {chatMessages.map((message, index) => (
+
+{chatMessages.map((message, index) => (
+  <div
+    key={`${index}-${message.role}`}
+    style={{
+      padding: "16px",
+      borderRadius: "10px",
+      background: message.role === "user" ? "#202b32" : "#111a20",
+      overflowWrap: "anywhere",
+    }}
+  >
+    <strong>
+      {message.role === "user" ? "You" : "Devora AI"}
+    </strong>
+
+    <p
+      style={{
+        whiteSpace: "pre-wrap",
+        lineHeight: "1.7",
+        marginTop: "8px",
+        fontSize: "16px",
+      }}
+    >
+      {message.content}
+    </p>
+
+    {message.matches?.length > 0 && (
+      <div style={{ marginTop: "20px" }}>
+        <h3
+          style={{
+            fontSize: "20px",
+            marginBottom: "12px",
+            color: "#dfe7ef",
+          }}
+        >
+          Relevant Code
+        </h3>
+
+        {message.matches.slice(0, 3).map((match, matchIndex) => (
           <div
-            key={`${index}-${message.role}`}
+            key={`${match.fileName}-${match.lineNumber}-${matchIndex}`}
             style={{
-              padding: "16px",
+              marginTop: "12px",
+              border: "1px solid #303d49",
               borderRadius: "10px",
-              background:
-                message.role === "user" ? "#202b32" : "#111a20",
-              overflowWrap: "anywhere",
+              overflow: "hidden",
+              background: "#111922",
             }}
           >
-            <strong>
-              {message.role === "user" ? "You" : "Devora AI"}
-            </strong>
-
-            <p
+            <div
               style={{
-                whiteSpace: "pre-wrap",
-                lineHeight: "1.7",
-                marginTop: "8px",
+                padding: "14px 16px",
+                background: "#1b2733",
+                borderBottom: "1px solid #303d49",
               }}
             >
-              {message.content}
-            </p>
-
-            {message.matches?.length > 0 && (
-              <div style={{ marginTop: "12px" }}>
-                <strong>Candidate code locations</strong>
-
-                {message.matches.map((match, matchIndex) => (
-                  <div
-                    key={`${match.fileName}-${match.lineNumber}-${matchIndex}`}
-                    style={{
-                      marginTop: "8px",
-                      padding: "10px",
-                      borderRadius: "6px",
-                      background: "#0b1116",
-                    }}
-                  >
-                    <p>
-                      <strong>File:</strong> {match.fileName}
-                    </p>
-                    <p>
-                      <strong>Line:</strong> {match.lineNumber}
-                    </p>
-                    <pre
-                      style={{
-                        whiteSpace: "pre-wrap",
-                        overflowWrap: "anywhere",
-                        marginTop: "8px",
-                      }}
-                    >
-                      {match.code}
-                    </pre>
-                  </div>
-                ))}
+              <div
+                style={{
+                  fontSize: "14px",
+                  color: "#aebdca",
+                  marginBottom: "6px",
+                }}
+              >
+                FILE
               </div>
-            )}
+
+              <div
+                style={{
+                  fontSize: "16px",
+                  fontWeight: "600",
+                  color: "#f1f5f9",
+                  overflowWrap: "anywhere",
+                }}
+              >
+                📄 {match.fileName}
+              </div>
+
+              <div
+                style={{
+                  display: "inline-block",
+                  marginTop: "9px",
+                  padding: "6px 10px",
+                  borderRadius: "5px",
+                  background: "#263b30",
+                  color: "#9be7b0",
+                  fontSize: "14px",
+                  fontWeight: "600",
+                }}
+              >
+                Line {match.lineNumber}
+              </div>
+            </div>
+
+            <div style={{ padding: "14px 16px" }}>
+              <div
+                style={{
+                  fontSize: "13px",
+                  fontWeight: "700",
+                  color: "#9baabb",
+                  marginBottom: "10px",
+                }}
+              >
+                CODE PREVIEW
+              </div>
+
+              <pre
+                style={{
+                  margin: 0,
+                  padding: "14px",
+                  borderRadius: "7px",
+                  background: "#080d12",
+                  color: "#d5e6f7",
+                  fontSize: "15px",
+                  lineHeight: "1.8",
+                  fontFamily: "'Consolas', 'Courier New', monospace",
+                  whiteSpace: "pre-wrap",
+                  overflowWrap: "anywhere",
+                  overflowX: "auto",
+                }}
+              >
+                {match.code?.trim() || "(Empty line)"}
+              </pre>
+            </div>
           </div>
         ))}
+      </div>
+    )}
+  </div>
+))}
 
+  
         {chatLoading && (
           <p role="status">Devora is examining your code...</p>
         )}
@@ -1228,7 +1299,7 @@ const handleCreateProject = async (event) => {
     </div>
   </section>
 )}
-
+.......................................
         {activePage === "Settings" && (
           <section className="inner-page settings-page">
             <div className="section-overline">
