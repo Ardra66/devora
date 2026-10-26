@@ -290,27 +290,82 @@ function App() {
       md: "Markdown",
     };
 
-    setCodeAnalysis({
-      fileName:
-        selectedSourceFile.path ||
-        selectedSourceFile.fileName ||
-        "Unknown file",
-      language:
-        languageByExtension[extension] ||
-        extension.toUpperCase() ||
-        "Unknown",
-      totalLines: lines.length,
-      totalCharacters: content.length,
-      emptyLines: lines.filter((line) => !line.trim()).length,
-      note:
-        "This is a basic local file summary. AI-powered code analysis can be connected to a backend endpoint later.",
-      result:
-        `Basic file summary\n\n` +
-        `• Lines: ${lines.length}\n` +
-        `• Characters: ${content.length}\n` +
-        `• Empty lines: ${lines.filter((line) => !line.trim()).length}\n\n` +
-        "This summary is calculated from the source file currently displayed.",
-    });
+    const issues = [];
+
+const checks = [
+  {
+    name: "Debugger statement",
+    pattern: /\bdebugger\s*;?/,
+    message: "Remove debugger statements before production.",
+  },
+  {
+    name: "Console logging",
+    pattern: /\bconsole\.log\s*\(/,
+    message: "Review console.log statements before production.",
+  },
+  {
+    name: "Loose equality",
+    pattern: /(?<![=!])==(?!=)/,
+    message: "Check whether === is more appropriate.",
+  },
+  {
+    name: "Empty catch block",
+    pattern: /catch\s*(?:\([^)]*\)\s*)?\{\s*\}/,
+    message: "An empty catch block may hide errors.",
+  },
+  {
+    name: "Potential hardcoded secret",
+    pattern:
+      /\b(?:api[_-]?key|secret|password|access[_-]?token)\b\s*[:=]\s*["'][^"']{8,}["']/i,
+    message: "Review this value and move real secrets to environment variables.",
+  },
+];
+
+lines.forEach((line, index) => {
+  checks.forEach((check) => {
+    if (check.pattern.test(line)) {
+      issues.push({
+        line: index + 1,
+        name: check.name,
+        message: check.message,
+        code: line.trim(),
+      });
+    }
+  });
+});
+
+setCodeAnalysis({
+  fileName:
+    selectedSourceFile.path ||
+    selectedSourceFile.fileName ||
+    "Unknown file",
+  language:
+    languageByExtension[extension] ||
+    extension.toUpperCase() ||
+    "Unknown",
+  totalLines: lines.length,
+  totalCharacters: content.length,
+  emptyLines: lines.filter((line) => !line.trim()).length,
+  issueCount: issues.length,
+  issues,
+  note:
+    "Local static checks flag potentially problematic patterns. They do not guarantee that all bugs or security issues are detected.",
+  result:
+    `Code Analysis Report\n\n` +
+    `• Lines: ${lines.length}\n` +
+    `• Characters: ${content.length}\n` +
+    `• Empty lines: ${lines.filter((line) => !line.trim()).length}\n` +
+    `• Potential issues: ${issues.length}\n\n` +
+    (issues.length
+      ? issues
+          .map(
+            (issue) =>
+              `Line ${issue.line}: ${issue.name}\n` +
+              `${issue.message}\nCode: ${issue.code}`
+          )
+          .join("\n\n")
+      : "No issues detected by the current checks."),
+});
 
     setAnalysisLoading(false);
   };
