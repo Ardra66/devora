@@ -1,3 +1,4 @@
+
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
@@ -16,24 +17,43 @@ const projectChatRoutes = require("./routes/projectChatRoutes");
 
 const app = express();
 
-connectDB();
-
 app.use(cors());
 app.use(express.json());
-app.use("/api/auth", authRoutes)
+
+connectDB();
+
+app.use("/api/auth", authRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/codebase", codebaseRoutes);
 app.use("/api/analysis", analysisRoutes);
 app.use("/api/project-chat", projectChatRoutes);
 
+app.get("/api/auth/me", protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId).select("-password");
 
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
 
-
-app.get("/server-check", (req, res) => {
-  res.json({ message: "Correct Devora server is running!" });
+    return res.status(200).json({
+      message: "Authenticated successfully",
+      user,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Server error",
+    });
+  }
 });
 
-
+app.get("/server-check", (req, res) => {
+  res.json({
+    message: "Correct Devora server is running!",
+  });
+});
 
 app.get("/", (req, res) => {
   res.json({
@@ -46,26 +66,3 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Devora server running on port ${PORT}`);
 });
-
-app.get("/api/auth/me", protect, async (req, res)=>{
-  try{
-    const User = require("./models/User")
-
-
-    const user = await User.findById(req.userId).select("-password")
-
-    if(!user){
-      return res.status(404).json({
-        message: "User not found"
-      })
-    }
-    res.status(200).json({
-      message: "Authenticated succesfully",
-      user,
-    })
-  }catch(error){
-    res.status(500).json({
-      meassage: "Server Error"
-    })
-  }
-})

@@ -1,3 +1,4 @@
+console.log("DEVORA AUTH ROUTES LOADED");
 const express = require("express");
 
 const {
