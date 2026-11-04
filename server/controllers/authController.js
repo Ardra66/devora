@@ -65,6 +65,15 @@ const loginUser = async (req, res) => {
 
     const user = await User.findOne({ email });
 
+
+console.log("User found:", !!user);
+
+if (user) {
+  console.log("Password hash exists:", !!user.password);
+  console.log("Password hash length:", user.password.length);
+}
+
+
     if (!user) {
       return res.status(401).json({
         message: "Invalid email or password",
@@ -75,6 +84,8 @@ const loginUser = async (req, res) => {
       password,
       user.password
     );
+          console.log("Password matched:", isPasswordCorrect);
+
 
     if (!isPasswordCorrect) {
       return res.status(401).json({
