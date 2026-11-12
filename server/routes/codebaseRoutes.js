@@ -74,7 +74,11 @@ router.post("/upload", protect, (req, res) => {
 upload.single("project")(req, res, (uploadError) => {
     console.log("ZIP upload error:", uploadError);
 if (uploadError) {
-  console.error("ZIP UPLOAD ERROR:", uploadError.stack || uploadError);
+  console.error("ZIP UPLOAD ERROR:", uploadError);
+
+  return res.status(400).json({
+    message: uploadError.message,
+  });
 }
 
 console.log("Received file:", req.file);
@@ -308,6 +312,18 @@ yauzl.fromBuffer(
 
 });
 });
+
+
+
+
+
+
+
+
+
+
+
+
 
 router.get("/", protect, async (req, res) => {
   try {

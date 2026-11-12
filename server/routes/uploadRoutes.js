@@ -1,0 +1,359 @@
+const express = require("express");
+const { randomUUID } = require("crypto");
+
+const router = express.Router();
+
+console.log("DEVORA UPLOAD ROUTES LOADED");
+
+const protect = require("../middleware/authMiddleware");
+const tigris = require("../config/tigris");
+const UploadSession = require("../models/UploadSession");
+
+const {
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  ListPartsCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
+} = require("@aws-sdk/client-s3");
+
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+
+// Upload configuration
+const MAX_FILE_SIZE = 1024 * 1024 * 1024; // 1 GB
+const PART_SIZE = 16 * 1024 * 1024; // 16 MB
+const SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 hours
+
+// POST /api/uploads/initiate
+// Create a multipart upload session
+router.post("/initiate", protect, async (req, res) => {
+  let uploadId = null;
+  let objectKey = null;
+
+  try {
+    const { fileName, fileSize } = req.body;
+
+    // Validate filename
+    if (!fileName || !fileName.toLowerCase().endsWith(".zip")) {
+      return res.status(400).json({
+        message: "Please upload a valid ZIP file.",
+      });
+    }
+
+    // Validate file size
+    if (
+      !Number.isSafeInteger(fileSize) ||
+      fileSize <= 0 ||
+      fileSize > MAX_FILE_SIZE
+    ) {
+      return res.status(400).json({
+        message: "ZIP file size must be between 1 byte and 1 GB.",
+      });
+    }
+
+    // Calculate multipart upload details
+    const totalParts = Math.ceil(fileSize / PART_SIZE);
+
+    // Sanitize filename
+    const safeFileName = fileName
+      .replace(/[^a-zA-Z0-9._-]/g, "_")
+      .slice(-150);
+
+    // Generate a unique storage key
+    objectKey = `uploads/${req.userId}/${randomUUID()}-${safeFileName}`;
+
+    // Start multipart upload in Tigris
+    const multipartUpload = await tigris.send(
+      new CreateMultipartUploadCommand({
+        Bucket: process.env.TIGRIS_BUCKET,
+        Key: objectKey,
+        ContentType: "application/zip",
+      })
+    );
+
+    uploadId = multipartUpload.UploadId;
+
+    if (!uploadId) {
+      throw new Error("Tigris did not return an upload ID.");
+    }
+
+    // Save upload session in MongoDB
+    const session = await UploadSession.create({
+      owner: req.userId,
+      originalFileName: fileName,
+      fileSize,
+      objectKey,
+      uploadId,
+      partSize: PART_SIZE,
+      totalParts,
+      uploadedParts: [],
+      status: "Initiated",
+      expiresAt: new Date(Date.now() + SESSION_DURATION),
+    });
+
+    return res.status(201).json({
+      message: "Upload session created successfully.",
+      sessionId: session._id,
+      fileName: session.originalFileName,
+      fileSize: session.fileSize,
+      partSize: session.partSize,
+      totalParts: session.totalParts,
+    });
+  } catch (error) {
+    console.error("UPLOAD INITIATION ERROR:", error.message);
+
+    // Clean up Tigris multipart upload if session creation fails
+    if (uploadId && objectKey) {
+      try {
+        await tigris.send(
+          new AbortMultipartUploadCommand({
+            Bucket: process.env.TIGRIS_BUCKET,
+            Key: objectKey,
+            UploadId: uploadId,
+          })
+        );
+      } catch (abortError) {
+        console.error("UPLOAD CLEANUP ERROR:", abortError.message);
+      }
+    }
+
+    return res.status(500).json({
+      message: "Could not initialize ZIP upload.",
+    });
+  }
+});
+
+// POST /api/uploads/:sessionId/part-url
+// Generate a temporary URL for uploading one part
+router.post("/:sessionId/part-url", protect, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { partNumber } = req.body;
+
+    const session = await UploadSession.findOne({
+      _id: sessionId,
+      owner: req.userId,
+    });
+
+    if (!session) {
+      return res.status(404).json({
+        message: "Upload session not found.",
+      });
+    }
+
+    if (
+      session.status !== "Initiated" &&
+      session.status !== "Uploading"
+    ) {
+      return res.status(400).json({
+        message: "This upload session is not active.",
+      });
+    }
+
+    if (session.expiresAt < new Date()) {
+      return res.status(400).json({
+        message: "Upload session has expired.",
+      });
+    }
+
+    if (
+      !Number.isInteger(partNumber) ||
+      partNumber < 1 ||
+      partNumber > session.totalParts
+    ) {
+      return res.status(400).json({
+        message: "Invalid upload part number.",
+      });
+    }
+
+    // Create a presigned URL for this part
+    const command = new UploadPartCommand({
+      Bucket: process.env.TIGRIS_BUCKET,
+      Key: session.objectKey,
+      UploadId: session.uploadId,
+      PartNumber: partNumber,
+    });
+
+    const uploadUrl = await getSignedUrl(tigris, command, {
+      expiresIn: 900, // 15 minutes
+    });
+
+    session.status = "Uploading";
+    await session.save();
+
+    return res.status(200).json({
+      uploadUrl,
+      partNumber,
+      expiresIn: 900,
+    });
+  } catch (error) {
+    console.error("PART URL ERROR:", error.message);
+
+    return res.status(500).json({
+      message: "Could not generate upload URL.",
+    });
+  }
+});
+
+// POST /api/uploads/:sessionId/complete
+// Verify uploaded parts and complete multipart upload
+router.post("/:sessionId/complete", protect, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+
+    const session = await UploadSession.findOne({
+      _id: sessionId,
+      owner: req.userId,
+    });
+
+    if (!session) {
+      return res.status(404).json({
+        message: "Upload session not found.",
+      });
+    }
+
+    if (session.status !== "Uploading") {
+      return res.status(400).json({
+        message: "Upload session is not ready for completion.",
+      });
+    }
+
+    if (session.expiresAt < new Date()) {
+      return res.status(400).json({
+        message: "Upload session has expired.",
+      });
+    }
+
+    // Retrieve uploaded parts from Tigris
+    const partsResponse = await tigris.send(
+      new ListPartsCommand({
+        Bucket: process.env.TIGRIS_BUCKET,
+        Key: session.objectKey,
+        UploadId: session.uploadId,
+      })
+    );
+
+    const uploadedParts = (partsResponse.Parts || []).sort(
+      (a, b) => a.PartNumber - b.PartNumber
+    );
+
+    // Verify all expected parts were uploaded
+    if (uploadedParts.length !== session.totalParts) {
+      return res.status(400).json({
+        message: "Some upload parts are missing.",
+        expectedParts: session.totalParts,
+        uploadedParts: uploadedParts.length,
+      });
+    }
+
+    // Verify part numbers, sizes, and ETags
+    for (let index = 0; index < uploadedParts.length; index++) {
+      const part = uploadedParts[index];
+      const expectedPartNumber = index + 1;
+
+      const expectedSize =
+        expectedPartNumber === session.totalParts
+          ? session.fileSize - session.partSize * (session.totalParts - 1)
+          : session.partSize;
+
+      if (
+        part.PartNumber !== expectedPartNumber ||
+        part.Size !== expectedSize ||
+        !part.ETag
+      ) {
+        return res.status(400).json({
+          message: "Uploaded parts failed validation.",
+        });
+      }
+    }
+
+    // Prepare parts for completion
+    const completedParts = uploadedParts.map((part) => ({
+      PartNumber: part.PartNumber,
+      ETag: part.ETag,
+    }));
+
+    // Complete multipart upload in Tigris
+    const result = await tigris.send(
+      new CompleteMultipartUploadCommand({
+        Bucket: process.env.TIGRIS_BUCKET,
+        Key: session.objectKey,
+        UploadId: session.uploadId,
+        MultipartUpload: {
+          Parts: completedParts,
+        },
+      })
+    );
+
+    session.status = "Completed";
+    await session.save();
+
+    return res.status(200).json({
+      message: "ZIP uploaded successfully to storage.",
+      objectKey: session.objectKey,
+      fileSize: session.fileSize,
+      location: result.Location || null,
+    });
+  } catch (error) {
+    console.error("UPLOAD COMPLETION ERROR:", error.message);
+
+    return res.status(500).json({
+      message: "Could not complete ZIP upload.",
+    });
+  }
+});
+
+// DELETE /api/uploads/:sessionId/abort
+// Abort an unfinished multipart upload
+router.delete("/:sessionId/abort", protect, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+
+    const session = await UploadSession.findOne({
+      _id: sessionId,
+      owner: req.userId,
+    });
+
+    if (!session) {
+      return res.status(404).json({
+        message: "Upload session not found.",
+      });
+    }
+
+    if (session.status === "Completed") {
+      return res.status(400).json({
+        message: "This upload has already been completed.",
+      });
+    }
+
+    if (session.status === "Aborted") {
+      return res.status(400).json({
+        message: "This upload has already been aborted.",
+      });
+    }
+
+    // Abort multipart upload in Tigris
+    await tigris.send(
+      new AbortMultipartUploadCommand({
+        Bucket: process.env.TIGRIS_BUCKET,
+        Key: session.objectKey,
+        UploadId: session.uploadId,
+      })
+    );
+
+    session.status = "Aborted";
+    await session.save();
+
+    return res.status(200).json({
+      message: "Upload aborted successfully.",
+    });
+  } catch (error) {
+    console.error("UPLOAD ABORT ERROR:", error.message);
+
+    return res.status(500).json({
+      message: "Could not abort upload.",
+    });
+  }
+});
+
+module.exports = router;
