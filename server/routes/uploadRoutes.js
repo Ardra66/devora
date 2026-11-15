@@ -10,6 +10,7 @@ const tigris = require("../config/tigris");
 
 const UploadSession = require("../models/UploadSession");
 const Codebase = require("../models/Codebase");
+const processCodebaseArchive = require("../utils/processCodebaseArchive");
 
 const {
   CreateMultipartUploadCommand,
@@ -359,6 +360,64 @@ router.post("/:sessionId/complete", protect, async (req, res) => {
     });
   }
 });
+
+
+// Process an already uploaded ZIP file
+router.post("/process/:codebaseId", protect, async (req, res) => {
+  try {
+    const codebase = await Codebase.findOne({
+      _id: req.params.codebaseId,
+      owner: req.userId,
+    });
+
+    if (!codebase) {
+      return res.status(404).json({
+        message: "Codebase not found.",
+      });
+    }
+
+    if (!codebase.archiveObjectKey) {
+      return res.status(400).json({
+        message: "No uploaded ZIP file found.",
+      });
+    }
+
+    if (codebase.status === "Ready" && codebase.fileCount > 0) {
+      return res.status(200).json({
+        message: "Codebase is already ready.",
+        status: "Ready",
+        fileCount: codebase.fileCount,
+      });
+    }
+
+    if (codebase.status === "Processing") {
+      return res.status(202).json({
+        message: "Codebase is already being processed.",
+        status: "Processing",
+      });
+    }
+
+    processCodebaseArchive(codebase._id).catch((error) => {
+      console.error("BACKGROUND CODEBASE PROCESSING ERROR:", error);
+    });
+
+    return res.status(202).json({
+      message: "Codebase processing started.",
+      status: "Processing",
+    });
+  } catch (error) {
+    console.error("CODEBASE PROCESSING ROUTE ERROR:", error);
+
+    return res.status(500).json({
+      message: "Could not start codebase processing.",
+    });
+  }
+});
+
+
+
+
+
 
 // DELETE /api/uploads/:sessionId/abort
 // Abort an unfinished multipart upload
