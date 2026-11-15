@@ -1,4 +1,3 @@
-
 const mongoose = require("mongoose");
 
 const uploadSessionSchema = new mongoose.Schema(
@@ -56,6 +55,13 @@ const uploadSessionSchema = new mongoose.Schema(
         },
       },
     ],
+
+    // Codebase created after successful ZIP upload
+    codebase: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Codebase",
+      default: null,
+    },
 
     status: {
       type: String,

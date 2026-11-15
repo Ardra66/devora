@@ -7,7 +7,9 @@ console.log("DEVORA UPLOAD ROUTES LOADED");
 
 const protect = require("../middleware/authMiddleware");
 const tigris = require("../config/tigris");
+
 const UploadSession = require("../models/UploadSession");
+const Codebase = require("../models/Codebase");
 
 const {
   CreateMultipartUploadCommand,
@@ -20,9 +22,54 @@ const {
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 
 // Upload configuration
-const MAX_FILE_SIZE = 1024 * 1024 * 1024; // 1 GB
-const PART_SIZE = 16 * 1024 * 1024; // 16 MB
-const SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 hours
+const MAX_FILE_SIZE = 1024 * 1024 * 1024;
+const PART_SIZE = 16 * 1024 * 1024;
+const SESSION_DURATION = 24 * 60 * 60 * 1000;
+
+// Create or retrieve the Codebase record for an upload session
+async function createCodebaseRecord(session) {
+  const codebaseName =
+    session.originalFileName
+      .split(/[\\/]/)
+      .pop()
+      .replace(/\.zip$/i, "")
+      .trim() || "Untitled Codebase";
+
+  // uploadSession has a unique sparse index in Codebase.js.
+  // This prevents duplicate Codebase records for the same upload.
+  const codebase = await Codebase.findOneAndUpdate(
+    {
+      uploadSession: session._id,
+    },
+    {
+      $setOnInsert: {
+        name: codebaseName,
+        originalFileName: session.originalFileName,
+        owner: session.owner,
+        archiveObjectKey: session.objectKey,
+        archiveSize: session.fileSize,
+        uploadSession: session._id,
+        status: "Uploaded",
+      },
+    },
+    {
+      new: true,
+      upsert: true,
+      setDefaultsOnInsert: true,
+    }
+  );
+
+  // Save the Codebase reference in the upload session
+  if (
+    !session.codebase ||
+    session.codebase.toString() !== codebase._id.toString()
+  ) {
+    session.codebase = codebase._id;
+    await session.save();
+  }
+
+  return codebase;
+}
 
 // POST /api/uploads/initiate
 // Create a multipart upload session
@@ -33,14 +80,16 @@ router.post("/initiate", protect, async (req, res) => {
   try {
     const { fileName, fileSize } = req.body;
 
-    // Validate filename
-    if (!fileName || !fileName.toLowerCase().endsWith(".zip")) {
+    if (
+      !fileName ||
+      typeof fileName !== "string" ||
+      !fileName.toLowerCase().endsWith(".zip")
+    ) {
       return res.status(400).json({
         message: "Please upload a valid ZIP file.",
       });
     }
 
-    // Validate file size
     if (
       !Number.isSafeInteger(fileSize) ||
       fileSize <= 0 ||
@@ -51,18 +100,14 @@ router.post("/initiate", protect, async (req, res) => {
       });
     }
 
-    // Calculate multipart upload details
     const totalParts = Math.ceil(fileSize / PART_SIZE);
 
-    // Sanitize filename
     const safeFileName = fileName
       .replace(/[^a-zA-Z0-9._-]/g, "_")
       .slice(-150);
 
-    // Generate a unique storage key
     objectKey = `uploads/${req.userId}/${randomUUID()}-${safeFileName}`;
 
-    // Start multipart upload in Tigris
     const multipartUpload = await tigris.send(
       new CreateMultipartUploadCommand({
         Bucket: process.env.TIGRIS_BUCKET,
@@ -77,7 +122,6 @@ router.post("/initiate", protect, async (req, res) => {
       throw new Error("Tigris did not return an upload ID.");
     }
 
-    // Save upload session in MongoDB
     const session = await UploadSession.create({
       owner: req.userId,
       originalFileName: fileName,
@@ -102,7 +146,6 @@ router.post("/initiate", protect, async (req, res) => {
   } catch (error) {
     console.error("UPLOAD INITIATION ERROR:", error.message);
 
-    // Clean up Tigris multipart upload if session creation fails
     if (uploadId && objectKey) {
       try {
         await tigris.send(
@@ -166,7 +209,6 @@ router.post("/:sessionId/part-url", protect, async (req, res) => {
       });
     }
 
-    // Create a presigned URL for this part
     const command = new UploadPartCommand({
       Bucket: process.env.TIGRIS_BUCKET,
       Key: session.objectKey,
@@ -175,7 +217,7 @@ router.post("/:sessionId/part-url", protect, async (req, res) => {
     });
 
     const uploadUrl = await getSignedUrl(tigris, command, {
-      expiresIn: 900, // 15 minutes
+      expiresIn: 900,
     });
 
     session.status = "Uploading";
@@ -196,7 +238,7 @@ router.post("/:sessionId/part-url", protect, async (req, res) => {
 });
 
 // POST /api/uploads/:sessionId/complete
-// Verify uploaded parts and complete multipart upload
+// Complete ZIP upload and create Codebase record
 router.post("/:sessionId/complete", protect, async (req, res) => {
   try {
     const { sessionId } = req.params;
@@ -209,6 +251,19 @@ router.post("/:sessionId/complete", protect, async (req, res) => {
     if (!session) {
       return res.status(404).json({
         message: "Upload session not found.",
+      });
+    }
+
+    // If already completed, retrieve/create its Codebase record.
+    // This makes retries safe without completing the Tigris upload again.
+    if (session.status === "Completed") {
+      const codebase = await createCodebaseRecord(session);
+
+      return res.status(200).json({
+        message: "ZIP upload completed successfully.",
+        objectKey: session.objectKey,
+        fileSize: session.fileSize,
+        codebase,
       });
     }
 
@@ -237,7 +292,6 @@ router.post("/:sessionId/complete", protect, async (req, res) => {
       (a, b) => a.PartNumber - b.PartNumber
     );
 
-    // Verify all expected parts were uploaded
     if (uploadedParts.length !== session.totalParts) {
       return res.status(400).json({
         message: "Some upload parts are missing.",
@@ -246,7 +300,7 @@ router.post("/:sessionId/complete", protect, async (req, res) => {
       });
     }
 
-    // Verify part numbers, sizes, and ETags
+    // Validate part numbers, sizes, and ETags
     for (let index = 0; index < uploadedParts.length; index++) {
       const part = uploadedParts[index];
       const expectedPartNumber = index + 1;
@@ -267,14 +321,13 @@ router.post("/:sessionId/complete", protect, async (req, res) => {
       }
     }
 
-    // Prepare parts for completion
     const completedParts = uploadedParts.map((part) => ({
       PartNumber: part.PartNumber,
       ETag: part.ETag,
     }));
 
     // Complete multipart upload in Tigris
-    const result = await tigris.send(
+    await tigris.send(
       new CompleteMultipartUploadCommand({
         Bucket: process.env.TIGRIS_BUCKET,
         Key: session.objectKey,
@@ -285,17 +338,21 @@ router.post("/:sessionId/complete", protect, async (req, res) => {
       })
     );
 
+    // Mark upload as completed
     session.status = "Completed";
     await session.save();
 
+    // Create the corresponding Codebase record in MongoDB
+    const codebase = await createCodebaseRecord(session);
+
     return res.status(200).json({
-      message: "ZIP uploaded successfully to storage.",
+      message: "ZIP uploaded and Codebase registered successfully.",
       objectKey: session.objectKey,
       fileSize: session.fileSize,
-      location: result.Location || null,
+      codebase,
     });
   } catch (error) {
-    console.error("UPLOAD COMPLETION ERROR:", error.message);
+    console.error("UPLOAD COMPLETION ERROR:", error);
 
     return res.status(500).json({
       message: "Could not complete ZIP upload.",
@@ -332,7 +389,6 @@ router.delete("/:sessionId/abort", protect, async (req, res) => {
       });
     }
 
-    // Abort multipart upload in Tigris
     await tigris.send(
       new AbortMultipartUploadCommand({
         Bucket: process.env.TIGRIS_BUCKET,
