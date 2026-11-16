@@ -16,12 +16,14 @@ router.post("/:codebaseId", protect, async (req, res) => {
     const { question } = req.body;
     const { codebaseId } = req.params;
 
+    // Validate codebase ID
     if (!mongoose.isValidObjectId(codebaseId)) {
       return res.status(400).json({
         message: "Invalid codebase ID.",
       });
     }
 
+    // Validate question
     if (typeof question !== "string" || !question.trim()) {
       return res.status(400).json({
         message: "Please enter a question.",
@@ -31,6 +33,7 @@ router.post("/:codebaseId", protect, async (req, res) => {
     const cleanQuestion = question.trim();
     const questionLower = cleanQuestion.toLowerCase();
 
+    // Find codebase belonging to authenticated user
     const codebase = await Codebase.findOne({
       _id: codebaseId,
       owner: req.userId,
@@ -42,6 +45,7 @@ router.post("/:codebaseId", protect, async (req, res) => {
       });
     }
 
+    // Retrieve uploaded source files
     const files = await SourceFile.find({
       codebase: codebase._id,
       owner: req.userId,
@@ -55,6 +59,7 @@ router.post("/:codebaseId", protect, async (req, res) => {
       });
     }
 
+    // Identify question types
     const isTitleQuestion =
       /\b(title|browser tab|tab title|document title)\b/i.test(
         cleanQuestion
@@ -70,19 +75,73 @@ router.post("/:codebaseId", protect, async (req, res) => {
         cleanQuestion
       );
 
+    // Create project file inventory
     const fileInventory = files
       .map((file) => file.path)
       .join("\n");
 
+    // Detect whether the user mentioned a specific source file
+    const requestedFileMatch = cleanQuestion.match(
+      /(?:[\w.-]+\/)*[\w.-]+\.(?:jsx?|tsx?|html|css|json|md|py|java|php|sql)\b/i
+    );
+
+    const requestedFile = requestedFileMatch
+      ? files.find((file) =>
+          file.path.toLowerCase().endsWith(
+            requestedFileMatch[0].toLowerCase()
+          )
+        )
+      : null;
+
     let context = "";
     let topMatches = [];
 
-    if (isStructureQuestion) {
+    // ==========================================
+    // 1. EXACT FILE RETRIEVAL
+    // ==========================================
+
+    if (requestedFile) {
+      const MAX_FILE_CHARS = 30000;
+
+      const sourceLines = requestedFile.content.split(/\r?\n/);
+
+      // Add line numbers to actual source code
+      const numberedLines = sourceLines.map(
+        (line, index) => `${index + 1}: ${line}`
+      );
+
+      const fullSource = numberedLines.join("\n");
+
+      context =
+        `FILE: ${requestedFile.path}\n` +
+        fullSource.slice(0, MAX_FILE_CHARS);
+
+      if (fullSource.length > MAX_FILE_CHARS) {
+        context +=
+          "\n\n[File truncated because it exceeded the context limit.]";
+      }
+
+      topMatches = sourceLines.slice(0, 10).map((line, index) => ({
+        fileName: requestedFile.path,
+        extension: requestedFile.extension,
+        lineNumber: index + 1,
+        code: line,
+        matchedWords: ["requested file"],
+        score: 1,
+      }));
+    }
+
+    // ==========================================
+    // 2. PROJECT STRUCTURE RETRIEVAL
+    // ==========================================
+
+    else if (isStructureQuestion) {
       const MAX_CONTEXT_CHARS = 60000;
       let usedChars = 0;
 
       for (const file of files) {
         const header = `\n\nFILE: ${file.path}\n`;
+
         const availableChars =
           MAX_CONTEXT_CHARS - usedChars - header.length;
 
@@ -97,13 +156,8 @@ router.post("/:codebaseId", protect, async (req, res) => {
         usedChars += fileContext.length;
 
         const lines = file.content.split(/\r?\n/);
-        const maxLinesPerFile = 2;
 
-        for (
-          let i = 0;
-          i < lines.length && i < maxLinesPerFile;
-          i++
-        ) {
+        for (let i = 0; i < lines.length && i < 2; i++) {
           if (!lines[i].trim()) continue;
 
           topMatches.push({
@@ -116,7 +170,13 @@ router.post("/:codebaseId", protect, async (req, res) => {
           });
         }
       }
-    } else {
+    }
+
+    // ==========================================
+    // 3. KEYWORD-BASED CODE RETRIEVAL
+    // ==========================================
+
+    else {
       const searchTerms = new Set(
         questionLower
           .split(/[^a-z0-9_]+/)
@@ -132,6 +192,7 @@ router.post("/:codebaseId", protect, async (req, res) => {
           "bcrypt",
           "token",
         ],
+
         authentication: [
           "auth",
           "login",
@@ -139,6 +200,7 @@ router.post("/:codebaseId", protect, async (req, res) => {
           "jwt",
           "token",
         ],
+
         validation: [
           "validate",
           "required",
@@ -146,6 +208,7 @@ router.post("/:codebaseId", protect, async (req, res) => {
           "check",
           "error",
         ],
+
         database: [
           "mongodb",
           "mongoose",
@@ -153,12 +216,14 @@ router.post("/:codebaseId", protect, async (req, res) => {
           "connection",
           "query",
         ],
+
         submit: [
           "onsubmit",
           "submit",
           "handlesubmit",
           "preventdefault",
         ],
+
         form: [
           "input",
           "submit",
@@ -166,6 +231,7 @@ router.post("/:codebaseId", protect, async (req, res) => {
           "handlesubmit",
           "validation",
         ],
+
         api: [
           "router",
           "route",
@@ -174,18 +240,21 @@ router.post("/:codebaseId", protect, async (req, res) => {
           "axios",
           "request",
         ],
+
         navbar: [
           "nav",
           "navigation",
           "header",
           "menu",
         ],
+
         styling: [
           "css",
           "class",
           "style",
           "stylesheet",
         ],
+
         image: [
           "img",
           "src",
@@ -194,6 +263,7 @@ router.post("/:codebaseId", protect, async (req, res) => {
         ],
       };
 
+      // Expand search terms
       for (const [term, related] of Object.entries(relatedTerms)) {
         if (searchTerms.has(term)) {
           related.forEach((word) => searchTerms.add(word));
@@ -202,6 +272,7 @@ router.post("/:codebaseId", protect, async (req, res) => {
 
       const matches = [];
 
+      // Search source code line by line
       for (const file of files) {
         const lines = file.content.split(/\r?\n/);
 
@@ -254,8 +325,10 @@ router.post("/:codebaseId", protect, async (req, res) => {
         }
       }
 
+      // Sort matches by relevance
       matches.sort((a, b) => b.score - a.score);
 
+      // Remove duplicate locations
       const seenLocations = new Set();
 
       const uniqueMatches = matches.filter((match) => {
@@ -269,7 +342,7 @@ router.post("/:codebaseId", protect, async (req, res) => {
         return true;
       });
 
-      const limit = isTitleQuestion ? 1 : isBodyQuestion ? 5 : 5;
+      const limit = isTitleQuestion ? 1 : 5;
 
       topMatches = uniqueMatches.slice(0, limit);
 
@@ -282,6 +355,10 @@ router.post("/:codebaseId", protect, async (req, res) => {
             .join("\n\n")
         : "No relevant source-code matches were found.";
     }
+
+    // ==========================================
+    // 4. GEMINI AI PROMPT
+    // ==========================================
 
     const prompt = `
 You are Devora AI, a programming assistant that explains uploaded projects.
@@ -299,15 +376,18 @@ SOURCE CODE CONTEXT:
 ${context}
 
 RULES:
+
 - Answer clearly and simply.
 - Use the supplied project inventory and source code as evidence.
 - For project-structure questions, explain the actual files and folders.
-- Explain each important file's likely responsibility using its supplied content.
+- For specific file questions, analyse the supplied file's actual source code.
+- Identify real functions, variables, imports, components and their interactions.
+- Do not invent functions, variables, file paths, technologies or features.
 - Distinguish confirmed facts from reasonable inferences.
-- Do not invent file paths, folders, technologies, or features.
-- If the supplied content is insufficient to determine a file's responsibility, say so.
+- If the supplied content is insufficient, clearly say so.
 - Do not claim to have inspected files whose contents were not supplied.
-- For specific code questions, include exact file paths and line numbers when available.
+- Include exact file paths and line numbers when available.
+- If a file is truncated, do not claim to have analysed its complete contents.
 `;
 
     const response = await ai.models.generateContent({
@@ -322,23 +402,20 @@ RULES:
       answer: response.text || "No answer was returned.",
     });
 
-} catch (error) {
-  console.error("Project chat error:", error);
+  } catch (error) {
+    console.error("Project chat error:", error);
 
-  if (error.status === 429) {
-    return res.status(429).json({
-      message:
-        "Devora AI has reached its Gemini API daily quota. Please try again after the quota resets or check your API usage limits.",
+    if (error.status === 429) {
+      return res.status(429).json({
+        message:
+          "Devora AI has reached its Gemini API daily quota. Please try again after the quota resets or check your API usage limits.",
+      });
+    }
+
+    return res.status(500).json({
+      message: "Unable to answer the project question right now.",
     });
   }
-
-  return res.status(500).json({
-    message: "Unable to answer the project question right now.",
-  });
-}
-
-
 });
 
 module.exports = router;
-
