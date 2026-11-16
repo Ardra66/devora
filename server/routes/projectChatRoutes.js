@@ -93,6 +93,10 @@ const requestedFiles = files.filter((file) => {
       .test(question)
   );
 });
+console.log(
+  "DEVORA REQUESTED FILES:",
+  requestedFiles.map((file) => file.path)
+);
 
     let context = "";
     let topMatches = [];
