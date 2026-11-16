@@ -374,11 +374,17 @@ RULES:
 - Never assume a component interaction without checking the supplied source code.
 - If a mentioned file was not retrieved, clearly say that its source code is unavailable.
 `;
+// Debug: Check which files are included in AI context
+console.log("DEVORA CONTEXT FILES:");
+console.log(context.match(/========== FILE: .*? ==========/g));
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
-      contents: prompt,
-    });
+console.log("DEVORA CONTEXT LENGTH:", context.length);
+
+// Send prompt to Gemini
+const response = await ai.models.generateContent({
+  model: "gemini-3.6-flash",
+  contents: prompt,
+});
 
     return res.status(200).json({
       message: "Project question answered.",
