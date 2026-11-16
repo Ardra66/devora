@@ -81,17 +81,18 @@ router.post("/:codebaseId", protect, async (req, res) => {
       .join("\n");
 
     // Detect whether the user mentioned a specific source file
-    const requestedFileMatch = cleanQuestion.match(
-      /(?:[\w.-]+\/)*[\w.-]+\.(?:jsx?|tsx?|html|css|json|md|py|java|php|sql)\b/i
-    );
+   // Detect all files mentioned in the user's question
+const requestedFiles = files.filter((file) => {
+  const filePath = file.path.toLowerCase();
+  const fileName = filePath.split("/").pop();
+  const question = questionLower;
 
-    const requestedFile = requestedFileMatch
-      ? files.find((file) =>
-          file.path.toLowerCase().endsWith(
-            requestedFileMatch[0].toLowerCase()
-          )
-        )
-      : null;
+  return (
+    question.includes(filePath) ||
+    new RegExp(`\\b${fileName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i")
+      .test(question)
+  );
+});
 
     let context = "";
     let topMatches = [];
@@ -100,78 +101,53 @@ router.post("/:codebaseId", protect, async (req, res) => {
     // 1. EXACT FILE RETRIEVAL
     // ==========================================
 
-    if (requestedFile) {
-      const MAX_FILE_CHARS = 30000;
+    if (requestedFiles.length > 0) {
+  const MAX_TOTAL_CHARS = 60000;
+  const MAX_FILE_CHARS = 20000;
 
-      const sourceLines = requestedFile.content.split(/\r?\n/);
+  let totalChars = 0;
 
-      // Add line numbers to actual source code
-      const numberedLines = sourceLines.map(
-        (line, index) => `${index + 1}: ${line}`
-      );
+  for (const file of requestedFiles) {
+    const sourceLines = file.content.split(/\r?\n/);
 
-      const fullSource = numberedLines.join("\n");
+    const numberedLines = sourceLines.map(
+      (line, index) => `${index + 1}: ${line}`
+    );
 
-      context =
-        `FILE: ${requestedFile.path}\n` +
-        fullSource.slice(0, MAX_FILE_CHARS);
+    const fullSource = numberedLines.join("\n");
 
-      if (fullSource.length > MAX_FILE_CHARS) {
-        context +=
-          "\n\n[File truncated because it exceeded the context limit.]";
-      }
+    const remainingChars = MAX_TOTAL_CHARS - totalChars;
 
-      topMatches = sourceLines.slice(0, 10).map((line, index) => ({
-        fileName: requestedFile.path,
-        extension: requestedFile.extension,
+    if (remainingChars <= 0) break;
+
+    const fileContent = fullSource.slice(
+      0,
+      Math.min(MAX_FILE_CHARS, remainingChars)
+    );
+
+    context +=
+      `\n\n========== FILE: ${file.path} ==========\n` +
+      fileContent;
+
+    totalChars += fileContent.length;
+
+    if (fullSource.length > fileContent.length) {
+      context += "\n[File content truncated due to context limit.]";
+    }
+
+    // Add preview lines for this file
+    sourceLines.slice(0, 10).forEach((line, index) => {
+      topMatches.push({
+        fileName: file.path,
+        extension: file.extension,
         lineNumber: index + 1,
         code: line,
         matchedWords: ["requested file"],
         score: 1,
-      }));
-    }
-
-    // ==========================================
-    // 2. PROJECT STRUCTURE RETRIEVAL
-    // ==========================================
-
-    else if (isStructureQuestion) {
-      const MAX_CONTEXT_CHARS = 60000;
-      let usedChars = 0;
-
-      for (const file of files) {
-        const header = `\n\nFILE: ${file.path}\n`;
-
-        const availableChars =
-          MAX_CONTEXT_CHARS - usedChars - header.length;
-
-        if (availableChars <= 0) {
-          break;
-        }
-
-        const content = file.content.slice(0, availableChars);
-        const fileContext = header + content;
-
-        context += fileContext;
-        usedChars += fileContext.length;
-
-        const lines = file.content.split(/\r?\n/);
-
-        for (let i = 0; i < lines.length && i < 2; i++) {
-          if (!lines[i].trim()) continue;
-
-          topMatches.push({
-            fileName: file.path,
-            extension: file.extension,
-            lineNumber: i + 1,
-            code: lines[i],
-            matchedWords: ["project structure"],
-            score: 1,
-          });
-        }
-      }
-    }
-
+      });
+    });
+  }
+}
     // ==========================================
     // 3. KEYWORD-BASED CODE RETRIEVAL
     // ==========================================
@@ -388,6 +364,11 @@ RULES:
 - Do not claim to have inspected files whose contents were not supplied.
 - Include exact file paths and line numbers when available.
 - If a file is truncated, do not claim to have analysed its complete contents.
+- When multiple files are supplied, analyse every supplied file.
+- Explain how data, props, functions, and state move between those files.
+- Support explanations with actual code from each relevant file.
+- Never assume a component interaction without checking the supplied source code.
+- If a mentioned file was not retrieved, clearly say that its source code is unavailable.
 `;
 
     const response = await ai.models.generateContent({
