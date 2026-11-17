@@ -373,6 +373,15 @@ RULES:
 - Support explanations with actual code from each relevant file.
 - Never assume a component interaction without checking the supplied source code.
 - If a mentioned file was not retrieved, clearly say that its source code is unavailable.
+- You MUST inspect the actual source code of every supplied file before answering.
+- Never describe a component's behaviour based only on React conventions or assumptions.
+- When explaining data flow, trace the actual props, state variables, functions and event handlers across the supplied files.
+- Explain each connection in the order it happens in the application.
+- Include actual code snippets copied from the supplied source code.
+- Mention the exact file path and line numbers for every important explanation.
+- If a behaviour cannot be verified from the supplied source code, explicitly say that it cannot be confirmed.
+- Never invent calculations, conditions, grades, functions or component properties.
+- Do not repeat the same explanation unnecessarily.
 `;
 // Debug: Check which files are included in AI context
 console.log("DEVORA CONTEXT FILES:");
