@@ -389,33 +389,62 @@ console.log(context.match(/========== FILE: .*? ==========/g));
 
 console.log("DEVORA CONTEXT LENGTH:", context.length);
 
-// Send prompt to Gemini
-const response = await ai.models.generateContent({
-  model: "gemini-3.6-flash",
-  contents: prompt,
-});
+// Send prompt to Gemini with automatic retry
+let response;
+const maxAttempts = 3;
 
-    return res.status(200).json({
-      message: "Project question answered.",
-      question: cleanQuestion,
-      matches: topMatches,
-      answer: response.text || "No answer was returned.",
+for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  try {
+    response = await ai.models.generateContent({
+      model: "gemini-3.6-flash",
+      contents: prompt,
     });
 
+    break;
   } catch (error) {
-    console.error("Project chat error:", error);
-
-    if (error.status === 429) {
-      return res.status(429).json({
-        message:
-          "Devora AI has reached its Gemini API daily quota. Please try again after the quota resets or check your API usage limits.",
-      });
+    if (error.status !== 503 || attempt === maxAttempts) {
+      throw error;
     }
 
-    return res.status(500).json({
-      message: "Unable to answer the project question right now.",
+    console.warn(
+      `Gemini temporarily unavailable. Retry ${attempt}/${maxAttempts}`
+    );
+
+    await new Promise((resolve) =>
+      setTimeout(resolve, 1000 * attempt)
+    );
+  }
+}
+
+// Return successful answer
+return res.status(200).json({
+  message: "Project question answered.",
+  question: cleanQuestion,
+  matches: topMatches,
+  answer: response.text || "No answer was returned.",
+});
+
+} catch (error) {
+  console.error("Project chat error:", error);
+
+  if (error.status === 429) {
+    return res.status(429).json({
+      message:
+        "Devora AI has reached its Gemini API daily quota. Please try again after the quota resets or check your API usage limits.",
     });
   }
+
+  if (error.status === 503) {
+    return res.status(503).json({
+      message:
+        "Devora AI is temporarily busy. Please try again in a few moments.",
+    });
+  }
+
+  return res.status(500).json({
+    message: "Unable to answer the project question right now.",
+  });
+}
 });
 
 module.exports = router;
