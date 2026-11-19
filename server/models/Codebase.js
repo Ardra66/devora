@@ -13,6 +13,33 @@ const codebaseSchema = new mongoose.Schema(
       required: true,
     },
 
+        // GitHub repository information
+    sourceType: {
+      type: String,
+      enum: ["upload", "github"],
+      default: "upload",
+    },
+
+    githubUrl: {
+      type: String,
+      default: null,
+    },
+
+    githubOwner: {
+      type: String,
+      default: null,
+    },
+
+    githubRepo: {
+      type: String,
+      default: null,
+    },
+
+    githubBranch: {
+      type: String,
+      default: null,
+    },
+
     owner: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -53,6 +80,13 @@ const codebaseSchema = new mongoose.Schema(
   {
     timestamps: true,
   }
+);
+
+
+
+codebaseSchema.index(
+  { owner: 1, originalFileName: 1 },
+  { unique: true }
 );
 
 module.exports = mongoose.model("Codebase", codebaseSchema);

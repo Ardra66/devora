@@ -1,4 +1,6 @@
+
 const express = require("express");
+
 const { randomUUID } = require("crypto");
 
 const router = express.Router();
@@ -6,10 +8,14 @@ const router = express.Router();
 console.log("DEVORA UPLOAD ROUTES LOADED");
 
 const protect = require("../middleware/authMiddleware");
+
 const tigris = require("../config/tigris");
 
 const UploadSession = require("../models/UploadSession");
+
 const Codebase = require("../models/Codebase");
+const { DeleteObjectCommand } = require("@aws-sdk/client-s3");
+
 const processCodebaseArchive = require("../utils/processCodebaseArchive");
 
 const {
@@ -22,12 +28,20 @@ const {
 
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 
-// Upload configuration
+// ==========================================
+// UPLOAD CONFIGURATION
+// ==========================================
+
 const MAX_FILE_SIZE = 1024 * 1024 * 1024;
+
 const PART_SIZE = 16 * 1024 * 1024;
+
 const SESSION_DURATION = 24 * 60 * 60 * 1000;
 
-// Create or retrieve the Codebase record for an upload session
+// ==========================================
+// CREATE OR RETRIEVE CODEBASE RECORD
+// ==========================================
+
 async function createCodebaseRecord(session) {
   const codebaseName =
     session.originalFileName
@@ -35,22 +49,29 @@ async function createCodebaseRecord(session) {
       .pop()
       .replace(/\.zip$/i, "")
       .trim() || "Untitled Codebase";
+      console.log("CREATE CODEBASE RECORD:", {
+  owner: String(session.owner),
+  originalFileName: session.originalFileName,
+  sessionId: String(session._id),
+});
 
-  // uploadSession has a unique sparse index in Codebase.js.
-  // This prevents duplicate Codebase records for the same upload.
   const codebase = await Codebase.findOneAndUpdate(
     {
-      uploadSession: session._id,
+      owner: session.owner,
+      originalFileName: session.originalFileName,
     },
     {
-      $setOnInsert: {
+      $set: {
         name: codebaseName,
-        originalFileName: session.originalFileName,
-        owner: session.owner,
         archiveObjectKey: session.objectKey,
         archiveSize: session.fileSize,
         uploadSession: session._id,
         status: "Uploaded",
+        fileCount: 0,
+      },
+      $setOnInsert: {
+        originalFileName: session.originalFileName,
+        owner: session.owner,
       },
     },
     {
@@ -60,20 +81,18 @@ async function createCodebaseRecord(session) {
     }
   );
 
-  // Save the Codebase reference in the upload session
-  if (
-    !session.codebase ||
-    session.codebase.toString() !== codebase._id.toString()
-  ) {
-    session.codebase = codebase._id;
-    await session.save();
-  }
+  session.codebase = codebase._id;
+
+  await session.save();
 
   return codebase;
 }
 
+// ==========================================
+// INITIATE MULTIPART UPLOAD
 // POST /api/uploads/initiate
-// Create a multipart upload session
+// ==========================================
+
 router.post("/initiate", protect, async (req, res) => {
   let uploadId = null;
   let objectKey = null;
@@ -101,10 +120,32 @@ router.post("/initiate", protect, async (req, res) => {
       });
     }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     const totalParts = Math.ceil(fileSize / PART_SIZE);
 
     const safeFileName = fileName
-      .replace(/[^a-zA-Z0-9._-]/g, "_")
+      .replace(/[^a-zA-Z0-9.\_-]/g, "_")
       .slice(-150);
 
     objectKey = `uploads/${req.userId}/${randomUUID()}-${safeFileName}`;
@@ -167,11 +208,15 @@ router.post("/initiate", protect, async (req, res) => {
   }
 });
 
+// ==========================================
+// GENERATE PART UPLOAD URL
 // POST /api/uploads/:sessionId/part-url
-// Generate a temporary URL for uploading one part
+// ==========================================
+
 router.post("/:sessionId/part-url", protect, async (req, res) => {
   try {
     const { sessionId } = req.params;
+
     const { partNumber } = req.body;
 
     const session = await UploadSession.findOne({
@@ -222,6 +267,7 @@ router.post("/:sessionId/part-url", protect, async (req, res) => {
     });
 
     session.status = "Uploading";
+
     await session.save();
 
     return res.status(200).json({
@@ -238,8 +284,11 @@ router.post("/:sessionId/part-url", protect, async (req, res) => {
   }
 });
 
+// ==========================================
+// COMPLETE MULTIPART UPLOAD
 // POST /api/uploads/:sessionId/complete
-// Complete ZIP upload and create Codebase record
+// ==========================================
+
 router.post("/:sessionId/complete", protect, async (req, res) => {
   try {
     const { sessionId } = req.params;
@@ -255,18 +304,31 @@ router.post("/:sessionId/complete", protect, async (req, res) => {
       });
     }
 
-    // If already completed, retrieve/create its Codebase record.
-    // This makes retries safe without completing the Tigris upload again.
-    if (session.status === "Completed") {
-      const codebase = await createCodebaseRecord(session);
+    // Handle completed upload retries
 
-      return res.status(200).json({
-        message: "ZIP upload completed successfully.",
-        objectKey: session.objectKey,
-        fileSize: session.fileSize,
-        codebase,
-      });
-    }
+    if (session.status === "Completed") {
+  let codebase = null;
+
+  // Reuse the existing Codebase if it was already registered
+  if (session.codebase) {
+    codebase = await Codebase.findOne({
+      _id: session.codebase,
+      owner: req.userId,
+    });
+  }
+
+  // Create a record only if one does not already exist
+  if (!codebase) {
+    codebase = await createCodebaseRecord(session);
+  }
+
+  return res.status(200).json({
+    message: "ZIP upload completed successfully.",
+    objectKey: session.objectKey,
+    fileSize: session.fileSize,
+    codebase,
+  });
+}
 
     if (session.status !== "Uploading") {
       return res.status(400).json({
@@ -281,6 +343,7 @@ router.post("/:sessionId/complete", protect, async (req, res) => {
     }
 
     // Retrieve uploaded parts from Tigris
+
     const partsResponse = await tigris.send(
       new ListPartsCommand({
         Bucket: process.env.TIGRIS_BUCKET,
@@ -301,14 +364,17 @@ router.post("/:sessionId/complete", protect, async (req, res) => {
       });
     }
 
-    // Validate part numbers, sizes, and ETags
+    // Validate part numbers, sizes and ETags
+
     for (let index = 0; index < uploadedParts.length; index++) {
       const part = uploadedParts[index];
+
       const expectedPartNumber = index + 1;
 
       const expectedSize =
         expectedPartNumber === session.totalParts
-          ? session.fileSize - session.partSize * (session.totalParts - 1)
+          ? session.fileSize -
+            session.partSize * (session.totalParts - 1)
           : session.partSize;
 
       if (
@@ -328,6 +394,7 @@ router.post("/:sessionId/complete", protect, async (req, res) => {
     }));
 
     // Complete multipart upload in Tigris
+
     await tigris.send(
       new CompleteMultipartUploadCommand({
         Bucket: process.env.TIGRIS_BUCKET,
@@ -340,10 +407,13 @@ router.post("/:sessionId/complete", protect, async (req, res) => {
     );
 
     // Mark upload as completed
+
     session.status = "Completed";
+
     await session.save();
 
-    // Create the corresponding Codebase record in MongoDB
+    // Create or update Codebase record
+
     const codebase = await createCodebaseRecord(session);
 
     return res.status(200).json({
@@ -361,8 +431,11 @@ router.post("/:sessionId/complete", protect, async (req, res) => {
   }
 });
 
+// ==========================================
+// PROCESS UPLOADED CODEBASE
+// POST /api/uploads/process/:codebaseId
+// ==========================================
 
-// Process an already uploaded ZIP file
 router.post("/process/:codebaseId", protect, async (req, res) => {
   try {
     const codebase = await Codebase.findOne({
@@ -396,6 +469,7 @@ router.post("/process/:codebaseId", protect, async (req, res) => {
         status: "Processing",
       });
     }
+    console.log("STARTING CODEBASE PROCESSING:", codebase._id);
 
     processCodebaseArchive(codebase._id).catch((error) => {
       console.error("BACKGROUND CODEBASE PROCESSING ERROR:", error);
@@ -414,13 +488,11 @@ router.post("/process/:codebaseId", protect, async (req, res) => {
   }
 });
 
-
-
-
-
-
+// ==========================================
+// ABORT UNFINISHED MULTIPART UPLOAD
 // DELETE /api/uploads/:sessionId/abort
-// Abort an unfinished multipart upload
+// ==========================================
+
 router.delete("/:sessionId/abort", protect, async (req, res) => {
   try {
     const { sessionId } = req.params;
@@ -457,6 +529,7 @@ router.delete("/:sessionId/abort", protect, async (req, res) => {
     );
 
     session.status = "Aborted";
+
     await session.save();
 
     return res.status(200).json({
@@ -467,6 +540,74 @@ router.delete("/:sessionId/abort", protect, async (req, res) => {
 
     return res.status(500).json({
       message: "Could not abort upload.",
+    });
+  }
+});
+
+
+
+// Delete an entire codebase/project
+router.delete("/:id", protect, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({
+        message: "Invalid codebase ID.",
+      });
+    }
+
+    // Find the project belonging to the logged-in user
+    const codebase = await Codebase.findOne({
+      _id: id,
+      owner: req.userId,
+    });
+
+    if (!codebase) {
+      return res.status(404).json({
+        message: "Codebase not found.",
+      });
+    }
+
+    // Delete the original ZIP archive from Tigris
+    if (codebase.archiveObjectKey) {
+      await tigris.send(
+        new DeleteObjectCommand({
+          Bucket: process.env.TIGRIS_BUCKET,
+          Key: codebase.archiveObjectKey,
+        })
+      );
+    }
+
+    // Delete all source files belonging to this project
+    await SourceFile.deleteMany({
+      codebase: codebase._id,
+      owner: req.userId,
+    });
+
+    // Delete the associated upload session
+    if (codebase.uploadSession) {
+      await UploadSession.deleteOne({
+        _id: codebase.uploadSession,
+        owner: req.userId,
+      });
+    }
+
+    // Delete the project record
+    await Codebase.deleteOne({
+      _id: codebase._id,
+      owner: req.userId,
+    });
+
+    return res.status(200).json({
+      message: "Project deleted successfully.",
+    });
+
+  } catch (error) {
+    console.error("DELETE PROJECT ERROR:", error);
+
+    return res.status(500).json({
+      message: "Failed to delete project.",
     });
   }
 });

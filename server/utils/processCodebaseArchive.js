@@ -32,9 +32,28 @@ const ignoredFiles = [
 ];
 
 const supportedExtensions = [
-  ".html", ".htm", ".css", ".js", ".jsx", ".ts", ".tsx",
-  ".json", ".md", ".txt", ".py", ".java", ".c", ".cpp",
-  ".h", ".cs", ".php", ".sql", ".xml", ".yaml", ".yml", ".sh",
+  ".html",
+  ".htm",
+  ".css",
+  ".js",
+  ".jsx",
+  ".ts",
+  ".tsx",
+  ".json",
+  ".md",
+  ".txt",
+  ".py",
+  ".java",
+  ".c",
+  ".cpp",
+  ".h",
+  ".cs",
+  ".php",
+  ".sql",
+  ".xml",
+  ".yaml",
+  ".yml",
+  ".sh",
 ];
 
 function shouldIgnoreFile(fileName) {
@@ -61,7 +80,9 @@ function readZipEntry(zipFile, entry) {
   return new Promise((resolve, reject) => {
     zipFile.openReadStream(entry, (error, stream) => {
       if (error || !stream) {
-        return reject(new Error("Unable to read ZIP source file."));
+        return reject(
+          new Error("Unable to read ZIP source file.")
+        );
       }
 
       const chunks = [];
@@ -99,7 +120,9 @@ async function extractZip(zipPath) {
       },
       (error, zipFile) => {
         if (error || !zipFile) {
-          return reject(new Error("Invalid or corrupted ZIP file."));
+          return reject(
+            new Error("Invalid or corrupted ZIP file.")
+          );
         }
 
         const sourceFiles = [];
@@ -133,34 +156,29 @@ async function extractZip(zipPath) {
           processing = true;
 
           try {
+            // Normalize ZIP paths.
             const fileName = entry.fileName.replace(/\\/g, "/");
 
+            // Prevent unsafe paths.
             if (
               fileName.startsWith("/") ||
               /^[a-zA-Z]:/.test(fileName) ||
               fileName.split("/").includes("..")
             ) {
-              throw new Error("Unsafe file path detected in ZIP.");
+              throw new Error(
+                "Unsafe file path detected in ZIP."
+              );
             }
 
+            // Skip directory entries.
             if (fileName.endsWith("/")) {
               processing = false;
               zipFile.readEntry();
               return;
             }
 
-            fileCount++;
-
-            totalUncompressedSize += entry.uncompressedSize;
-
-            if (fileCount > MAX_FILES) {
-              throw new Error("ZIP contains more than 2000 files.");
-            }
-
-            if (totalUncompressedSize > MAX_UNCOMPRESSED_SIZE) {
-              throw new Error("ZIP contents exceed the 100 MB limit.");
-            }
-
+            // Skip ignored folders, unsupported files,
+            // and files larger than the individual file limit.
             if (
               shouldIgnoreFile(fileName) ||
               !isSupportedTextFile(fileName) ||
@@ -171,8 +189,27 @@ async function extractZip(zipPath) {
               return;
             }
 
+            // Count only supported source files.
+            fileCount++;
+
+            if (fileCount > MAX_FILES) {
+              throw new Error(
+                "ZIP contains more than 2000 supported source files."
+              );
+            }
+
+            // Count only supported source files toward this limit.
+            totalUncompressedSize += entry.uncompressedSize;
+
+            if (totalUncompressedSize > MAX_UNCOMPRESSED_SIZE) {
+              throw new Error(
+                "Supported source files exceed the 100 MB limit."
+              );
+            }
+
             const buffer = await readZipEntry(zipFile, entry);
 
+            // Skip binary files.
             if (buffer.includes(0)) {
               processing = false;
               zipFile.readEntry();

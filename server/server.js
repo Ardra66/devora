@@ -16,12 +16,18 @@ const analysisRoutes = require("./routes/analysisRoutes");
 const projectChatRoutes = require("./routes/projectChatRoutes");
 const uploadRoutes = require("./routes/uploadRoutes");
 const app = express();
+console.log("SERVER FILE:", __filename);
+console.log("SERVER DIRECTORY:", process.cwd());
 
 app.use(cors());
 app.use(express.json());
 
 
 connectDB();
+app.use((req, res, next) => {
+  console.log("INCOMING REQUEST:", req.method, req.originalUrl);
+  next();
+});
 
 app.use("/api/auth", authRoutes);
 app.use("/api/projects", projectRoutes);
@@ -52,6 +58,8 @@ app.get("/api/auth/me", protect, async (req, res) => {
 });
 
 app.get("/server-check", (req, res) => {
+  console.log("SERVER-CHECK ROUTE REACHED");
+
   res.json({
     message: "Correct Devora server is running!",
   });

@@ -1,8 +1,10 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const protect = require("../middleware/authMiddleware");
+
 const Codebase = require("../models/Codebase");
 const SourceFile = require("../models/SourceFile");
+
 const { GoogleGenAI } = require("@google/genai");
 
 const router = express.Router();
@@ -11,19 +13,55 @@ const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
 });
 
+// ==========================================
+// GEMINI RETRY HANDLER
+// ==========================================
+
+const generateWithRetry = async (model, maxAttempts, prompt) => {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      console.log(`DEVORA GEMINI MODEL: ${model}`);
+
+      return await ai.models.generateContent({
+        model,
+        contents: prompt,
+      });
+
+    } catch (error) {
+      if (error.status !== 503 || attempt === maxAttempts) {
+        throw error;
+      }
+
+      console.warn(
+        `${model} unavailable. Retry ${attempt}/${maxAttempts}`
+      );
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, 1000 * attempt)
+      );
+    }
+  }
+};
+
+// ==========================================
+// PROJECT CHAT ROUTE
+// ==========================================
+
 router.post("/:codebaseId", protect, async (req, res) => {
   try {
     const { question } = req.body;
     const { codebaseId } = req.params;
 
-    // Validate codebase ID
+    // ==========================================
+    // 1. VALIDATION
+    // ==========================================
+
     if (!mongoose.isValidObjectId(codebaseId)) {
       return res.status(400).json({
         message: "Invalid codebase ID.",
       });
     }
 
-    // Validate question
     if (typeof question !== "string" || !question.trim()) {
       return res.status(400).json({
         message: "Please enter a question.",
@@ -33,7 +71,10 @@ router.post("/:codebaseId", protect, async (req, res) => {
     const cleanQuestion = question.trim();
     const questionLower = cleanQuestion.toLowerCase();
 
-    // Find codebase belonging to authenticated user
+    // ==========================================
+    // 2. FIND CODEBASE
+    // ==========================================
+
     const codebase = await Codebase.findOne({
       _id: codebaseId,
       owner: req.userId,
@@ -45,7 +86,10 @@ router.post("/:codebaseId", protect, async (req, res) => {
       });
     }
 
-    // Retrieve uploaded source files
+    // ==========================================
+    // 3. RETRIEVE SOURCE FILES
+    // ==========================================
+
     const files = await SourceFile.find({
       codebase: codebase._id,
       owner: req.userId,
@@ -59,7 +103,10 @@ router.post("/:codebaseId", protect, async (req, res) => {
       });
     }
 
-    // Identify question types
+    // ==========================================
+    // 4. IDENTIFY QUESTION TYPES
+    // ==========================================
+
     const isTitleQuestion =
       /\b(title|browser tab|tab title|document title)\b/i.test(
         cleanQuestion
@@ -75,43 +122,125 @@ router.post("/:codebaseId", protect, async (req, res) => {
         cleanQuestion
       );
 
-    // Create project file inventory
+    // ==========================================
+    // 5. PROJECT FILE INVENTORY
+    // ==========================================
+
     const fileInventory = files
       .map((file) => file.path)
       .join("\n");
 
-    // Detect whether the user mentioned a specific source file
-   // Detect all files mentioned in the user's question
-const requestedFiles = files.filter((file) => {
-  const filePath = file.path.toLowerCase();
-  const fileName = filePath.split("/").pop();
-  const question = questionLower;
+    // ==========================================
+    // 6. DETECT ALL REQUESTED FILES
+    // ==========================================
 
-  return (
-    question.includes(filePath) ||
-    new RegExp(`\\b${fileName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i")
-      .test(question)
-  );
-});
-console.log(
-  "DEVORA REQUESTED FILES:",
-  requestedFiles.map((file) => file.path)
-);
+    const requestedFiles = files.filter((file) => {
+      const filePath = file.path.toLowerCase();
+
+      const fileName = filePath.split("/").pop();
+
+      const escapedFileName = fileName.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&"
+      );
+
+      return (
+        questionLower.includes(filePath) ||
+        new RegExp(`\\b${escapedFileName}\\b`, "i").test(
+          questionLower
+        )
+      );
+    });
+
+    console.log(
+      "DEVORA REQUESTED FILES:",
+      requestedFiles.map((file) => file.path)
+    );
 
     let context = "";
     let topMatches = [];
 
     // ==========================================
-    // 1. EXACT FILE RETRIEVAL
+    // 7. EXACT FILE RETRIEVAL
     // ==========================================
 
     if (requestedFiles.length > 0) {
+      const MAX_TOTAL_CHARS = 60000;
+      const MAX_FILE_CHARS = 20000;
+
+      let totalChars = 0;
+
+      for (const file of requestedFiles) {
+        const sourceLines = file.content.split(/\r?\n/);
+
+        const numberedLines = sourceLines.map(
+          (line, index) => `${index + 1}: ${line}`
+        );
+
+        const fullSource = numberedLines.join("\n");
+
+        const remainingChars = MAX_TOTAL_CHARS - totalChars;
+
+        if (remainingChars <= 0) break;
+
+        const fileContent = fullSource.slice(
+          0,
+          Math.min(MAX_FILE_CHARS, remainingChars)
+        );
+
+        context +=
+          `\n\n========== FILE: ${file.path} ==========\n` +
+          fileContent;
+
+        totalChars += fileContent.length;
+
+        if (fullSource.length > fileContent.length) {
+          context +=
+            "\n[File content truncated due to context limit.]";
+        }
+
+        // Add preview lines for each requested file
+
+        sourceLines.slice(0, 10).forEach((line, index) => {
+          topMatches.push({
+            fileName: file.path,
+            extension: file.extension,
+            lineNumber: index + 1,
+            code: line,
+            matchedWords: ["requested file"],
+            score: 1,
+          });
+        });
+      }
+    }
+
+    // ==========================================
+    // 8. PROJECT STRUCTURE RETRIEVAL
+    // ==========================================
+
+   // ==========================================
+// 8. PROJECT STRUCTURE + SOURCE CODE RETRIEVAL
+// ==========================================
+
+else if (isStructureQuestion) {
+
   const MAX_TOTAL_CHARS = 60000;
-  const MAX_FILE_CHARS = 20000;
+  const MAX_FILE_CHARS = 8000;
 
   let totalChars = 0;
 
-  for (const file of requestedFiles) {
+  context = "PROJECT FILE STRUCTURE:\n";
+
+  context += fileInventory;
+
+  context += "\n\n========== ACTUAL SOURCE CODE ==========\n";
+
+  for (const file of files) {
+
+    if (!file.content) continue;
+
+    if (totalChars >= MAX_TOTAL_CHARS) break;
+
     const sourceLines = file.content.split(/\r?\n/);
 
     const numberedLines = sourceLines.map(
@@ -121,8 +250,6 @@ console.log(
     const fullSource = numberedLines.join("\n");
 
     const remainingChars = MAX_TOTAL_CHARS - totalChars;
-
-    if (remainingChars <= 0) break;
 
     const fileContent = fullSource.slice(
       0,
@@ -136,24 +263,22 @@ console.log(
     totalChars += fileContent.length;
 
     if (fullSource.length > fileContent.length) {
-      context += "\n[File content truncated due to context limit.]";
+      context += "\n[File content truncated.]";
     }
-
-    // Add preview lines for this file
-    sourceLines.slice(0, 10).forEach((line, index) => {
-      topMatches.push({
-        fileName: file.path,
-        extension: file.extension,
-        lineNumber: index + 1,
-        code: line,
-        matchedWords: ["requested file"],
-        score: 1,
-      });
-    });
   }
+
+  console.log(
+    "DEVORA STRUCTURE FILES:",
+    files.map(file => file.path)
+  );
+
+  console.log(
+    "DEVORA STRUCTURE SOURCE CODE LENGTH:",
+    totalChars
+  );
 }
     // ==========================================
-    // 3. KEYWORD-BASED CODE RETRIEVAL
+    // 9. KEYWORD-BASED CODE RETRIEVAL
     // ==========================================
 
     else {
@@ -244,6 +369,7 @@ console.log(
       };
 
       // Expand search terms
+
       for (const [term, related] of Object.entries(relatedTerms)) {
         if (searchTerms.has(term)) {
           related.forEach((word) => searchTerms.add(word));
@@ -253,11 +379,13 @@ console.log(
       const matches = [];
 
       // Search source code line by line
+
       for (const file of files) {
         const lines = file.content.split(/\r?\n/);
 
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i];
+
           const lineLower = line.toLowerCase().trim();
 
           if (!lineLower) continue;
@@ -278,7 +406,9 @@ console.log(
             } else {
               continue;
             }
-          } else if (isBodyQuestion) {
+          }
+
+          else if (isBodyQuestion) {
             if (/<body\b[^>]*>/i.test(line)) {
               score += 20;
             } else if (/<\/body\s*>/i.test(line)) {
@@ -290,7 +420,9 @@ console.log(
             } else {
               continue;
             }
-          } else if (matchedWords.length === 0) {
+          }
+
+          else if (matchedWords.length === 0) {
             continue;
           }
 
@@ -305,10 +437,12 @@ console.log(
         }
       }
 
-      // Sort matches by relevance
+      // Sort by relevance
+
       matches.sort((a, b) => b.score - a.score);
 
       // Remove duplicate locations
+
       const seenLocations = new Set();
 
       const uniqueMatches = matches.filter((match) => {
@@ -319,6 +453,7 @@ console.log(
         }
 
         seenLocations.add(key);
+
         return true;
       });
 
@@ -337,22 +472,27 @@ console.log(
     }
 
     // ==========================================
-    // 4. GEMINI AI PROMPT
+    // 10. GEMINI AI PROMPT
     // ==========================================
 
     const prompt = `
+
 You are Devora AI, a programming assistant that explains uploaded projects.
 
 PROJECT NAME:
+
 ${codebase.name}
 
 PROJECT FILE INVENTORY:
+
 ${fileInventory}
 
 USER QUESTION:
+
 ${cleanQuestion}
 
 SOURCE CODE CONTEXT:
+
 ${context}
 
 RULES:
@@ -382,69 +522,92 @@ RULES:
 - If a behaviour cannot be verified from the supplied source code, explicitly say that it cannot be confirmed.
 - Never invent calculations, conditions, grades, functions or component properties.
 - Do not repeat the same explanation unnecessarily.
+
 `;
-// Debug: Check which files are included in AI context
-console.log("DEVORA CONTEXT FILES:");
-console.log(context.match(/========== FILE: .*? ==========/g));
 
-console.log("DEVORA CONTEXT LENGTH:", context.length);
+    // ==========================================
+    // 11. DEBUG SOURCE CODE CONTEXT
+    // ==========================================
 
-// Send prompt to Gemini with automatic retry
-let response;
-const maxAttempts = 3;
+    console.log("DEVORA CONTEXT FILES:");
 
-for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-  try {
-    response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
-      contents: prompt,
-    });
+    console.log(
+      context.match(/========== FILE: .*? ==========/g)
+    );
 
-    break;
-  } catch (error) {
-    if (error.status !== 503 || attempt === maxAttempts) {
-      throw error;
+    console.log("DEVORA CONTEXT LENGTH:", context.length);
+
+    // ==========================================
+    // 12. GEMINI PRIMARY MODEL + FALLBACK
+    // ==========================================
+
+    let response;
+
+    try {
+      // Try primary model: Gemini 3.6 Flash
+
+      response = await generateWithRetry(
+        "gemini-3.6-flash",
+        3,
+        prompt
+      );
+
+    } catch (error) {
+      if (error.status !== 503) {
+        throw error;
+      }
+
+      console.warn(
+        "Primary Gemini model unavailable. Trying fallback model."
+      );
+
+      // Try fallback model: Gemini 3.8 Flash
+
+      response = await generateWithRetry(
+        "gemini-3.8-flash",
+        2,
+        prompt
+      );
     }
 
-    console.warn(
-      `Gemini temporarily unavailable. Retry ${attempt}/${maxAttempts}`
-    );
+    // ==========================================
+    // 13. RETURN SUCCESSFUL ANSWER
+    // ==========================================
 
-    await new Promise((resolve) =>
-      setTimeout(resolve, 1000 * attempt)
-    );
-  }
-}
+    return res.status(200).json({
+      message: "Project question answered.",
+      question: cleanQuestion,
+      matches: topMatches,
+      answer: response.text || "No answer was returned.",
+    });
 
-// Return successful answer
-return res.status(200).json({
-  message: "Project question answered.",
-  question: cleanQuestion,
-  matches: topMatches,
-  answer: response.text || "No answer was returned.",
-});
+  } catch (error) {
+    console.error("Project chat error:", error);
 
-} catch (error) {
-  console.error("Project chat error:", error);
+    // Gemini quota exceeded
 
-  if (error.status === 429) {
-    return res.status(429).json({
-      message:
-        "Devora AI has reached its Gemini API daily quota. Please try again after the quota resets or check your API usage limits.",
+    if (error.status === 429) {
+      return res.status(429).json({
+        message:
+          "Devora AI has reached its Gemini API daily quota. Please try again after the quota resets or check your API usage limits.",
+      });
+    }
+
+    // Both Gemini models unavailable
+
+    if (error.status === 503) {
+      return res.status(503).json({
+        message:
+          "Devora AI is temporarily busy. Please try again in a few moments.",
+      });
+    }
+
+    // Other errors
+
+    return res.status(500).json({
+      message: "Unable to answer the project question right now.",
     });
   }
-
-  if (error.status === 503) {
-    return res.status(503).json({
-      message:
-        "Devora AI is temporarily busy. Please try again in a few moments.",
-    });
-  }
-
-  return res.status(500).json({
-    message: "Unable to answer the project question right now.",
-  });
-}
 });
 
 module.exports = router;

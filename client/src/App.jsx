@@ -64,6 +64,35 @@ const normalizePath = (path) =>
     .replace(/\\/g, "/")
     .replace(/^\/+|\/+$/g, "");
 
+
+    const uploadChunk = (url, chunk, onProgress) => {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+
+    xhr.open("PUT", url);
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        onProgress(event.loaded, event.total);
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        reject(new Error(`Chunk upload failed: ${xhr.status}`));
+      }
+    };
+
+    xhr.onerror = () => {
+      reject(new Error("Network error during chunk upload."));
+    };
+
+    xhr.send(chunk);
+  });
+};
+
 function App() {
   const [selectedCodebase, setSelectedCodebase] = useState(null);
   const [sourceFiles, setSourceFiles] = useState([]);
@@ -92,6 +121,8 @@ function App() {
   const [cursor, setCursor] = useState({ x: -100, y: -100 });
   const [mobileMenu, setMobileMenu] = useState(false);
   const [notification, setNotification] = useState("");
+  const [uploading, setUploading] = useState(false);
+const [uploadProgress, setUploadProgress] = useState("");
 
   useEffect(() => {
     if (!notification) return undefined;
@@ -131,6 +162,10 @@ function App() {
       try {
         const data = await apiRequest("/api/codebase");
 
+console.log("CODEBASE API RESPONSE:", data);
+        
+
+
         setCodebases(data.codebases || []);
         setCodebasesError("");
       } catch (error) {
@@ -165,6 +200,352 @@ function App() {
   const completedCount = projects.filter(
     (project) => project.status === "Completed"
   ).length;
+
+const handleUploadCodebase = async (event) => {
+  const file = event.target.files[0];
+
+  if (!file) return;
+
+  if (!file.name.toLowerCase().endsWith(".zip")) {
+    setNotification("Please select a ZIP file.");
+    event.target.value = "";
+    return;
+  }
+
+  if (file.size > 1024 * 1024 * 1024) {
+    setNotification("Maximum ZIP size is 1 GB.");
+    event.target.value = "";
+    return;
+  }
+
+  let sessionId = null;
+  let uploadCompleted = false;
+
+  const CONCURRENT_UPLOADS = 2;
+  const MAX_RETRIES = 2;
+
+  const uploadedBytes = {};
+
+  setUploading(true);
+
+  try {
+    // 1. Initialize upload
+    setUploadProgress("Preparing your project upload...");
+
+    const session = await apiRequest("/api/uploads/initiate", {
+      method: "POST",
+      body: JSON.stringify({
+        fileName: file.name,
+        fileSize: file.size,
+      }),
+    });
+
+    sessionId = session.sessionId;
+
+    const { partSize, totalParts } = session;
+
+    // Calculate combined progress
+    const updateProgress = () => {
+      const totalUploaded = Object.values(uploadedBytes).reduce(
+        (sum, value) => sum + value,
+        0
+      );
+
+      const percentage = Math.min(
+        100,
+        Math.round((totalUploaded / file.size) * 100)
+      );
+
+      setUploadProgress(
+        `Uploading project — ${percentage}%`
+      );
+    };
+
+    // 2. Upload one chunk with automatic retries
+    const uploadPart = async (partNumber) => {
+      const start = (partNumber - 1) * partSize;
+      const end = Math.min(start + partSize, file.size);
+      const chunk = file.slice(start, end);
+
+      let lastError;
+
+      for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
+        try {
+          uploadedBytes[partNumber] = 0;
+          updateProgress();
+
+          // Generate fresh presigned URL
+          const partData = await apiRequest(
+            `/api/uploads/${sessionId}/part-url`,
+            {
+              method: "POST",
+              body: JSON.stringify({ partNumber }),
+            }
+          );
+
+          // Upload directly to Tigris
+          await uploadChunk(
+            partData.uploadUrl,
+            chunk,
+            (loaded) => {
+              uploadedBytes[partNumber] = loaded;
+              updateProgress();
+            }
+          );
+
+          uploadedBytes[partNumber] = chunk.size;
+          updateProgress();
+
+          return;
+
+        } catch (error) {
+          lastError = error;
+
+          uploadedBytes[partNumber] = 0;
+          updateProgress();
+
+          console.warn(
+            `Chunk ${partNumber} failed. Attempt ${attempt} of ${MAX_RETRIES + 1}`
+          );
+
+          if (attempt <= MAX_RETRIES) {
+            await new Promise((resolve) =>
+              setTimeout(resolve, 1000 * attempt)
+            );
+          }
+        }
+      }
+
+      throw lastError;
+    };
+
+    // 3. Upload chunks with limited concurrency
+    const parts = Array.from(
+      { length: totalParts },
+      (_, index) => index + 1
+    );
+
+    for (
+      let i = 0;
+      i < parts.length;
+      i += CONCURRENT_UPLOADS
+    ) {
+      const batch = parts.slice(
+        i,
+        i + CONCURRENT_UPLOADS
+      );
+
+      await Promise.all(
+        batch.map((partNumber) => uploadPart(partNumber))
+      );
+    }
+
+    // 4. Complete multipart upload
+    setUploadProgress("Finalizing your project upload...");
+
+    const result = await apiRequest(
+      `/api/uploads/${sessionId}/complete`,
+      {
+        method: "POST",
+      }
+    );
+
+    console.log("UPLOAD COMPLETION RESPONSE:", result);
+
+    uploadCompleted = true;
+
+    uploadCompleted = true;
+
+// 5. Start codebase processing
+const codebaseId = result?.codebase?._id;
+
+if (!codebaseId) {
+  throw new Error("Upload completed, but no codebase ID was returned.");
+}
+
+setUploadProgress("Extracting source files...");
+
+const processingResult = await apiRequest(
+  `/api/uploads/process/${codebaseId}`,
+  {
+    method: "POST",
+  }
+);
+
+console.log("CODEBASE PROCESSING RESPONSE:", processingResult);
+
+// 6. Refresh Codebase Directory
+setUploadProgress("Refreshing Codebase Directory...");
+
+const data = await apiRequest("/api/codebase");
+
+console.log("REFRESHED CODEBASE LIST:", data);
+
+setCodebases(data.codebases || []);
+
+    setNotification(
+      `${result?.codebase?.name || file.name.replace(/\.zip$/i, "")} uploaded successfully!`
+    );
+
+  } catch (error) {
+    console.error("Codebase upload error:", error);
+
+    // Abort only unfinished uploads
+    if (sessionId && !uploadCompleted) {
+      try {
+        await apiRequest(
+          `/api/uploads/${sessionId}/abort`,
+          {
+            method: "DELETE",
+          }
+        );
+      } catch (abortError) {
+        console.error("Upload cancellation failed:", abortError);
+      }
+    }
+
+    setNotification(
+      error.message || "Failed to upload codebase."
+    );
+
+  } finally {
+    setUploading(false);
+    setUploadProgress("");
+    event.target.value = "";
+  }
+};
+
+
+const handleRetryProcessing = async (codebase) => {
+  try {
+    setCodebases((previous) =>
+      previous.map((item) =>
+        item._id === codebase._id
+          ? { ...item, status: "Processing" }
+          : item
+      )
+    );
+
+    const result = await apiRequest(
+      `/api/uploads/process/${codebase._id}`,
+      {
+        method: "POST",
+      }
+    );
+
+    console.log("RETRY PROCESSING RESPONSE:", result);
+
+    setNotification("Codebase processing started!");
+
+    const data = await apiRequest("/api/codebase");
+    setCodebases(data.codebases || []);
+  } catch (error) {
+    console.error("RETRY PROCESSING ERROR:", error);
+    setNotification(error.message || "Could not retry processing.");
+    
+    const data = await apiRequest("/api/codebase");
+    setCodebases(data.codebases || []);
+  }
+};
+
+
+
+
+
+
+
+
+const handleDeleteProject = async (codebase) => {
+  const confirmed = window.confirm(
+    `Are you sure you want to permanently delete "${codebase.name}" and all its source files?`
+  );
+
+  if (!confirmed) return;
+
+  try {
+    await apiRequest(`/api/codebase/${codebase._id}`, {
+      method: "DELETE",
+    });
+
+    // Remove the project from the UI
+    setCodebases((previous) =>
+      previous.filter((item) => item._id !== codebase._id)
+    );
+
+    // Close Source Explorer if this project is selected
+    if (selectedCodebase?._id === codebase._id) {
+      setSelectedCodebase(null);
+      setSourceFiles([]);
+      setSelectedSourceFile(null);
+      setCodeAnalysis(null);
+    }
+
+    setNotification("Project deleted successfully!");
+  } catch (error) {
+    console.error("DELETE PROJECT ERROR:", error);
+    setNotification(
+      error.message || "Failed to delete project."
+    );
+  }
+};
+
+
+
+
+const handleDeleteSourceFile = async (file) => {
+  const confirmed = window.confirm(
+    `Are you sure you want to delete "${file.path}"?`
+  );
+
+  if (!confirmed) return;
+
+  try {
+    await apiRequest(
+      `/api/codebase/${selectedCodebase._id}/files/${file._id}`,
+      {
+        method: "DELETE",
+      }
+    );
+
+    // Remove the deleted file from the UI
+    setSourceFiles((previous) =>
+      previous.filter((item) => item._id !== file._id)
+    );
+
+    // Update the selected codebase file count
+    setSelectedCodebase((previous) => ({
+      ...previous,
+      fileCount: Math.max(0, previous.fileCount - 1),
+    }));
+
+    // Update the codebase cards
+    setCodebases((previous) =>
+      previous.map((item) =>
+        item._id === selectedCodebase._id
+          ? {
+              ...item,
+              fileCount: Math.max(0, item.fileCount - 1),
+            }
+          : item
+      )
+    );
+
+    setNotification("Source file deleted successfully!");
+  } catch (error) {
+    console.error("DELETE SOURCE FILE ERROR:", error);
+    setNotification(
+      error.message || "Failed to delete source file."
+    );
+  }
+};
+
+
+
+
+
+
+
+
 
   const handleViewCodebase = async (codebase) => {
     setSelectedCodebase(codebase);
@@ -421,6 +802,16 @@ setCodeAnalysis({
       setChatLoading(false);
     }
   };
+
+
+
+
+
+
+
+
+
+
 
   const handleCreateProject = async (event) => {
     event.preventDefault();
@@ -967,6 +1358,40 @@ const handleUpdateProject = async (event) => {
                 </div>
               </div>
 
+
+<div className="codebase-upload-actions">
+  <input
+    id="codebase-upload"
+    type="file"
+    accept=".zip,application/zip"
+    hidden
+    onChange={handleUploadCodebase}
+    disabled={uploading}
+  />
+
+  <button
+    className="neon-button"
+    onClick={() =>
+      document.getElementById("codebase-upload").click()
+    }
+    disabled={uploading}
+  >
+    <Plus size={17} />
+    {uploading ? "Uploading..." : "Upload Codebase"}
+  </button>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
               {codebasesLoading ? (
                 <p>Loading codebases...</p>
               ) : codebasesError ? (
@@ -1001,6 +1426,32 @@ const handleUpdateProject = async (event) => {
                       <div className="technology-list">
                         <span>{codebase.fileCount ?? 0} files</span>
                       </div>
+                      {codebase.status === "Failed" && (
+  <button
+    className="neon-button"
+    style={{ marginTop: "12px" }}
+    onClick={(event) => {
+      event.stopPropagation();
+      handleRetryProcessing(codebase);
+    }}
+  >
+    Retry Processing
+  </button>
+)}
+
+
+<button
+  type="button"
+  className="neon-button"
+  style={{ marginTop: "12px" }}
+  onClick={(event) => {
+    event.stopPropagation();
+    handleDeleteProject(codebase);
+  }}
+>
+  Delete Project
+</button>
+
 
                       <div className="project-card-footer">
                         <span>UPLOADED CODEBASE</span>
@@ -1036,35 +1487,59 @@ const handleUpdateProject = async (event) => {
                   </button>
                 </div>
 
-                {sourceFilesLoading ? (
-                  <p>Loading source files...</p>
-                ) : sourceFiles.length > 0 ? (
-                  <div className="project-grid">
-                    {sourceFiles.map((file) => (
-                      <article
-                        className="project-card project-cyan"
-                        key={file._id}
-                        onClick={() =>
-                          handleViewSourceFile(selectedCodebase, file)
-                        }
-                        style={{ cursor: "pointer" }}
-                      >
-                        <div className="project-symbol">
-                          <Code2 size={23} />
-                        </div>
-                        <h3>{file.path}</h3>
-                        <p className="project-description">
-                          {file.extension || "Source file"}
-                        </p>
-                        <span>Click to view source code →</span>
-                      </article>
-                    ))}
-                  </div>
-                ) : (
-                  <p>No source files found.</p>
-                )}
-              </section>
-            )}
+               {sourceFilesLoading ? (
+  <p>Loading source files...</p>
+) : sourceFiles.length > 0 ? (
+  <div className="project-grid">
+    {sourceFiles.map((file) => (
+      <article
+        className="project-card project-cyan"
+        key={file._id}
+        onClick={() =>
+          handleViewSourceFile(selectedCodebase, file)
+        }
+        style={{ cursor: "pointer" }}
+      >
+        <div className="project-symbol">
+          <Code2 size={23} />
+        </div>
+
+        <h3>{file.path}</h3>
+
+        <p className="project-description">
+          {file.extension || "Source file"}
+        </p>
+
+        <span>Click to view source code →</span>
+
+        <button
+          type="button"
+          className="neon-button"
+          style={{ marginTop: "12px" }}
+          onClick={(event) => {
+            event.stopPropagation();
+            handleDeleteSourceFile(file);
+          }}
+        >
+          Delete File
+        </button>
+      </article>
+    ))}
+  </div>
+) : (
+  <p>No source files found.</p>
+)}
+</section>
+)}
+
+
+
+
+
+
+
+
+
 
             {selectedSourceFile && (
               <section className="projects-section">

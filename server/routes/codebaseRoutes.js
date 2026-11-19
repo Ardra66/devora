@@ -6,8 +6,13 @@ const mongoose = require("mongoose");
 const protect = require("../middleware/authMiddleware");
 const Codebase = require("../models/Codebase");
 const SourceFile = require("../models/SourceFile");
+const tigris = require("../config/tigris");
+const UploadSession = require("../models/UploadSession");
+
+const { DeleteObjectCommand } = require("@aws-sdk/client-s3");
 
 const router = express.Router();
+console.log("DEVORA CODEBASE ROUTES LOADED");
 
 const MAX_FILES = 2000;
 const MAX_UNCOMPRESSED_SIZE = 100 * 1024 * 1024;
@@ -251,13 +256,28 @@ yauzl.fromBuffer(
         const originalFileName = req.file.originalname;
         const name = path.basename(originalFileName, ".zip");
 
-        createdCodebase = await Codebase.create({
-          name,
-          originalFileName,
-          owner: req.userId,
-          fileCount: sourceFiles.length,
-          status: "Processing",
-        });
+       createdCodebase = await Codebase.findOneAndUpdate(
+  {
+    owner: req.userId,
+    originalFileName,
+  },
+  {
+    $set: {
+      name,
+      fileCount: sourceFiles.length,
+      status: "Processing",
+    },
+    $setOnInsert: {
+      owner: req.userId,
+      originalFileName,
+    },
+  },
+  {
+    new: true,
+    upsert: true,
+    setDefaultsOnInsert: true,
+  }
+);
 
         if (sourceFiles.length > 0) {
           const documents = sourceFiles.map((file) => ({
@@ -426,5 +446,149 @@ router.get("/:id/files/:fileId", protect, async (req, res) => {
     });
   }
 });
+
+
+
+
+
+// Delete an individual source file
+router.delete("/:id/files/:fileId", protect, async (req, res) => {
+  console.log("DELETE SOURCE FILE ROUTE REACHED:", req.params.fileId);
+  
+  try {
+    const { id, fileId } = req.params;
+
+    // Validate IDs
+    if (
+      !mongoose.isValidObjectId(id) ||
+      !mongoose.isValidObjectId(fileId)
+    ) {
+      return res.status(400).json({
+        message: "Invalid codebase or source file ID.",
+      });
+    }
+
+    // Verify codebase belongs to the logged-in user
+    const codebase = await Codebase.findOne({
+      _id: id,
+      owner: req.userId,
+    });
+
+    if (!codebase) {
+      return res.status(404).json({
+        message: "Codebase not found.",
+      });
+    }
+
+    // Delete only the selected file from this codebase
+    const deletedFile = await SourceFile.findOneAndDelete({
+      _id: fileId,
+      codebase: codebase._id,
+      owner: req.userId,
+    });
+
+    if (!deletedFile) {
+      return res.status(404).json({
+        message: "Source file not found.",
+      });
+    }
+
+    // Update the codebase file count
+    const remainingFiles = await SourceFile.countDocuments({
+      codebase: codebase._id,
+      owner: req.userId,
+    });
+
+    codebase.fileCount = remainingFiles;
+    await codebase.save();
+
+    return res.status(200).json({
+      message: "Source file deleted successfully.",
+      deletedFile: deletedFile.path,
+      fileCount: remainingFiles,
+    });
+  } catch (error) {
+    console.error("Delete source file error:", error);
+
+    return res.status(500).json({
+      message: "Failed to delete source file.",
+    });
+  }
+});
+
+// Delete an entire project/codebase
+router.delete("/:id", protect, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({
+        message: "Invalid codebase ID.",
+      });
+    }
+
+    // Find the project belonging to the logged-in user
+    const codebase = await Codebase.findOne({
+      _id: id,
+      owner: req.userId,
+    });
+
+    if (!codebase) {
+      return res.status(404).json({
+        message: "Codebase not found.",
+      });
+    }
+
+    // Delete ZIP archive from Tigris
+    if (codebase.archiveObjectKey) {
+      await tigris.send(
+        new DeleteObjectCommand({
+          Bucket: process.env.TIGRIS_BUCKET,
+          Key: codebase.archiveObjectKey,
+        })
+      );
+    }
+
+    // Delete all source files
+    await SourceFile.deleteMany({
+      codebase: codebase._id,
+      owner: req.userId,
+    });
+
+    // Delete associated upload session
+    if (codebase.uploadSession) {
+      await UploadSession.deleteOne({
+        _id: codebase.uploadSession,
+        owner: req.userId,
+      });
+    }
+
+    // Delete project record
+    await Codebase.deleteOne({
+      _id: codebase._id,
+      owner: req.userId,
+    });
+
+    return res.status(200).json({
+      message: "Project deleted successfully.",
+    });
+
+  } catch (error) {
+    console.error("DELETE PROJECT ERROR:", error);
+
+    return res.status(500).json({
+      message: "Failed to delete project.",
+    });
+  }
+});
+console.log(
+  "DELETE PROJECT ROUTE REGISTERED:",
+  router.stack.some(
+    (layer) =>
+      layer.route &&
+      layer.route.path === "/:id" &&
+      layer.route.methods.delete
+  )
+);
 
 module.exports = router;
