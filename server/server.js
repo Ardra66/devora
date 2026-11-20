@@ -5,6 +5,7 @@ const dotenv = require("dotenv");
 const path = require("path");
 
 dotenv.config({ path: path.join(__dirname, ".env") });
+const githubRoutes = require("./routes/githubRoutes");
 
 const connectDB = require("./config/db");
 const protect = require("./middleware/authMiddleware");
@@ -35,6 +36,7 @@ app.use("/api/codebase", codebaseRoutes);
 app.use("/api/analysis", analysisRoutes);
 app.use("/api/project-chat", projectChatRoutes);
 app.use("/api/uploads", uploadRoutes);
+app.use("/api/github", githubRoutes);
 
 app.get("/api/auth/me", protect, async (req, res) => {
   try {
@@ -72,6 +74,7 @@ app.get("/", (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
+console.log("ACTIVE DEVORA SERVER PID:", process.pid);
 
 app.listen(PORT, () => {
   console.log(`Devora server running on port ${PORT}`);

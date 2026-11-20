@@ -71,6 +71,20 @@ function shouldIgnoreFile(fileName) {
 }
 
 function isSupportedTextFile(fileName) {
+  const baseName = path.basename(fileName).toLowerCase();
+
+  const supportedExtensionlessFiles = [
+    "readme",
+    "license",
+    "makefile",
+    "dockerfile",
+    "procfile",
+  ];
+
+  if (supportedExtensionlessFiles.includes(baseName)) {
+    return true;
+  }
+
   return supportedExtensions.some((extension) =>
     fileName.toLowerCase().endsWith(extension)
   );
@@ -198,7 +212,7 @@ async function extractZip(zipPath) {
               );
             }
 
-            // Count only supported source files toward this limit.
+            // Count supported source files toward this limit.
             totalUncompressedSize += entry.uncompressedSize;
 
             if (totalUncompressedSize > MAX_UNCOMPRESSED_SIZE) {

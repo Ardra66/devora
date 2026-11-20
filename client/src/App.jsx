@@ -123,6 +123,9 @@ function App() {
   const [notification, setNotification] = useState("");
   const [uploading, setUploading] = useState(false);
 const [uploadProgress, setUploadProgress] = useState("");
+const [showGithubImport, setShowGithubImport] = useState(false);
+const [githubUrl, setGithubUrl] = useState("");
+const [githubImporting, setGithubImporting] = useState(false);
 
   useEffect(() => {
     if (!notification) return undefined;
@@ -163,7 +166,7 @@ const [uploadProgress, setUploadProgress] = useState("");
         const data = await apiRequest("/api/codebase");
 
 console.log("CODEBASE API RESPONSE:", data);
-        
+
 
 
         setCodebases(data.codebases || []);
@@ -414,6 +417,40 @@ setCodebases(data.codebases || []);
     event.target.value = "";
   }
 };
+const handleGitHubImport = async (event) => {
+  event.preventDefault();
+
+  if (!githubUrl.trim()) {
+    setNotification("Please enter a GitHub repository URL.");
+    return;
+  }
+
+  setGithubImporting(true);
+
+  try {
+    const result = await apiRequest("/api/github/import", {
+      method: "POST",
+      body: JSON.stringify({
+        githubUrl: githubUrl.trim(),
+      }),
+    });
+
+    setNotification(result.message || "GitHub import started!");
+
+    setGithubUrl("");
+    setShowGithubImport(false);
+
+    // Refresh Codebase Directory
+    const data = await apiRequest("/api/codebase");
+    setCodebases(data.codebases || []);
+
+  } catch (error) {
+    console.error("GITHUB IMPORT ERROR:", error);
+    setNotification(error.message || "GitHub import failed.");
+  } finally {
+    setGithubImporting(false);
+  }
+};
 
 
 const handleRetryProcessing = async (codebase) => {
@@ -442,19 +479,11 @@ const handleRetryProcessing = async (codebase) => {
   } catch (error) {
     console.error("RETRY PROCESSING ERROR:", error);
     setNotification(error.message || "Could not retry processing.");
-    
+
     const data = await apiRequest("/api/codebase");
     setCodebases(data.codebases || []);
   }
 };
-
-
-
-
-
-
-
-
 const handleDeleteProject = async (codebase) => {
   const confirmed = window.confirm(
     `Are you sure you want to permanently delete "${codebase.name}" and all its source files?`
@@ -538,16 +567,7 @@ const handleDeleteSourceFile = async (file) => {
     );
   }
 };
-
-
-
-
-
-
-
-
-
-  const handleViewCodebase = async (codebase) => {
+const handleViewCodebase = async (codebase) => {
     setSelectedCodebase(codebase);
     setSelectedSourceFile(null);
     setCodeAnalysis(null);
@@ -558,7 +578,6 @@ const handleDeleteSourceFile = async (file) => {
       const data = await apiRequest(
         `/api/codebase/${codebase._id}/files`
       );
-
       setSourceFiles(data.files || []);
     } catch (error) {
       setNotification(error.message || "Failed to load source files.");
@@ -641,7 +660,6 @@ const handleDeleteSourceFile = async (file) => {
       setSourceFilesLoading(false);
     }
   };
-
   const handleAnalyzeCode = () => {
     if (!selectedSourceFile) {
       setNotification("Please select a source file first.");
@@ -802,17 +820,6 @@ setCodeAnalysis({
       setChatLoading(false);
     }
   };
-
-
-
-
-
-
-
-
-
-
-
   const handleCreateProject = async (event) => {
     event.preventDefault();
 
@@ -1357,8 +1364,6 @@ const handleUpdateProject = async (event) => {
                   <p>Your uploaded source code, ready to explore.</p>
                 </div>
               </div>
-
-
 <div className="codebase-upload-actions">
   <input
     id="codebase-upload"
@@ -1379,20 +1384,18 @@ const handleUpdateProject = async (event) => {
     <Plus size={17} />
     {uploading ? "Uploading..." : "Upload Codebase"}
   </button>
+
+  <button
+    type="button"
+    className="neon-button"
+    onClick={() => setShowGithubImport(true)}
+    disabled={githubImporting}
+  >
+    <Code2 size={17} />
+    Import from GitHub
+  </button>
 </div>
-
-
-
-
-
-
-
-
-
-
-
-
-              {codebasesLoading ? (
+{codebasesLoading ? (
                 <p>Loading codebases...</p>
               ) : codebasesError ? (
                 <p>{codebasesError}</p>
@@ -1531,17 +1534,7 @@ const handleUpdateProject = async (event) => {
 )}
 </section>
 )}
-
-
-
-
-
-
-
-
-
-
-            {selectedSourceFile && (
+ {selectedSourceFile && (
               <section className="projects-section">
                 <div className="projects-heading">
                   <div>
@@ -2031,7 +2024,6 @@ const handleUpdateProject = async (event) => {
           </div>
         </footer>
       </main>
-
       {showCreate && (
         <div
           className="modal-backdrop"
@@ -2041,10 +2033,11 @@ const handleUpdateProject = async (event) => {
             }
           }}
         >
-<form
-  className="create-modal"
-  onSubmit={editingProject ? handleUpdateProject : handleCreateProject}
->            <button
+          <form
+            className="create-modal"
+            onSubmit={editingProject ? handleUpdateProject : handleCreateProject}
+          >
+            <button
               type="button"
               className="modal-close icon-button"
               onClick={() => setShowCreate(false)}
@@ -2062,9 +2055,10 @@ const handleUpdateProject = async (event) => {
             </div>
 
             <h2>
-  {editingProject ? "Edit project" : "Create a project"}
-  <span>.</span>
-</h2>
+              {editingProject ? "Edit project" : "Create a project"}
+              <span>.</span>
+            </h2>
+
             <p className="modal-description">
               Give your next idea a name and a place to grow.
             </p>
@@ -2102,12 +2096,80 @@ const handleUpdateProject = async (event) => {
               type="submit"
               className="neon-button modal-submit"
             >
-{editingProject ? <Pencil size={18} /> : <Plus size={18} />}
-{editingProject ? "Save changes" : "Create project"}          
-  </button>
+              {editingProject ? <Pencil size={18} /> : <Plus size={18} />}
+              {editingProject ? "Save changes" : "Create project"}
+            </button>
 
             <p className="modal-disclaimer">
               SAVED TO YOUR DATABASE WHEN THE API REQUEST SUCCEEDS
+            </p>
+          </form>
+        </div>
+      )}
+
+      {showGithubImport && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setShowGithubImport(false);
+            }
+          }}
+        >
+          <form
+            className="create-modal"
+            onSubmit={handleGitHubImport}
+          >
+            <button
+              type="button"
+              className="modal-close icon-button"
+              onClick={() => setShowGithubImport(false)}
+              aria-label="Close dialog"
+            >
+              <X size={19} />
+            </button>
+
+            <div className="modal-icon">
+              <Code2 size={24} />
+            </div>
+
+            <div className="section-overline">
+              <span>REPOSITORY INTEGRATION</span>
+            </div>
+
+            <h2>
+              Import from <span>GitHub.</span>
+            </h2>
+
+            <p className="modal-description">
+              Connect a public GitHub repository to your Devora workspace.
+            </p>
+
+            <label className="form-label" htmlFor="github-url">
+              Repository URL
+            </label>
+
+            <input
+              id="github-url"
+              className="form-input"
+              type="url"
+              value={githubUrl}
+              onChange={(event) => setGithubUrl(event.target.value)}
+              placeholder="https://github.com/owner/repository"
+              required
+            />
+
+            <button
+              type="submit"
+              className="neon-button modal-submit"
+              disabled={githubImporting}
+            >
+              <Code2 size={18} />
+              {githubImporting ? "Importing..." : "Import Repository"}
+            </button>
+
+            <p className="modal-disclaimer">
+              PUBLIC REPOSITORIES ONLY | PRIVATE REPOSITORY SUPPORT COMING LATER
             </p>
           </form>
         </div>
